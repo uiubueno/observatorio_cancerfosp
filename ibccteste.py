@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from lifelines import KaplanMeierFitter
-import os
+import io
 
 # ==========================================
 # CONFIGURAÇÃO DA PÁGINA E UI CUSTOMIZADA
@@ -19,23 +19,128 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# BARRA LATERAL
-with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/2965/2965306.png", width=60)
-    st.title("Motor de Análise RHC")
-    st.markdown("Faça o upload da base de dados bruta exportada do sistema FOSP para gerar o relatório executivo auditado.")
-    
-    arquivo_upado = st.file_uploader("📥 Envie a planilha FOSP (.xlsx ou .xls)", type=["xlsx", "xls"])
-    
-    st.divider()
-    st.header("⚙️ Configuração Demográfica")
-    filtro_sexo = st.selectbox("Filtro Global: Sexo", ['Ambos', 'MASCULINO', 'FEMININO'])
-    
-    st.markdown("<br><br><br><br>", unsafe_allow_html=True)
-    st.caption("🔒 **Privacidade:** Os dados processados nesta sessão não são armazenados em nenhum servidor externo.")
+# DICIONÁRIOS GLOBAIS DE TRADUÇÃO DA FOSP
+DIC_SEXO = {1: 'MASCULINO', 2: 'FEMININO'}
+DIC_ESCOLARIDADE = {1: 'ANALFABETO', 2: 'ENS. FUNDAMENTAL INCOMPLETO', 3: 'ENS. FUNDAMENTAL COMPLETO', 4: 'ENSINO MÉDIO', 5: 'SUPERIOR', 9: 'IGNORADA'}
+DIC_ATENDIMENTO = {1: 'CONVÊNIO', 2: 'SUS', 3: 'PARTICULAR', 9: 'SEM INFORMAÇÃO'}
+DIC_DIAGPREV = {1: 'SEM DIAGNÓSTICO/SEM TRATAMENTO', 2: 'COM DIAGNÓSTICO/SEM TRATAMENTO', 3: 'COM DIAGNÓSTICO/COM TRATAMENTO', 4: 'OUTROS'}
+DIC_BASEDIAG = {1: 'EXAME CLÍNICO', 2: 'RECURSOS AUXILIARES NÃO MICROSCÓPICOS', 3: 'CONFIRMAÇÃO MICROSCÓPICA', 4: 'SEM INFORMAÇÃO'}
+DIC_ULTINFO = {1: 'VIVO, COM CÂNCER', 2: 'VIVO, SOE', 3: 'ÓBITO POR CÂNCER', 4: 'ÓBITO POR OUTRAS CAUSAS, SOE'}
+DIC_SIM_NAO = {0: 'NÃO', 1: 'SIM'}
+DIC_HORMONIO = {0: 'SEM', 1: 'COM'}
+DIC_LATERALIDADE = {1: 'DIREITA', 2: 'ESQUERDA', 3: 'BILATERAL', 8: 'NÃO SE APLICA'}
+DIC_TRAT_COMBO = {'A': 'Cirurgia', 'B': 'Radioterapia', 'C': 'Quimioterapia', 'D': 'Cirurgia + Radioterapia', 'E': 'Cirurgia + Quimioterapia', 'F': 'Radioterapia + Quimioterapia', 'G': 'Cirurgia + Radio + Quimio', 'H': 'Cirurgia + Radio + Quimio + Hormonio', 'I': 'Outras combinações', 'J': 'Nenhum tratamento'}
+DIC_CLINICA = {1: 'ALERGIA/IMUNOLOGIA', 2: 'CIRURGIA CARDIACA', 3: 'CIRURGIA CABEÇA E PESCOÇO', 4: 'CIRURGIA GERAL', 5: 'CIRURGIA PEDIATRICA', 6: 'CIRURGIA PLASTICA', 7: 'CIRURGIA TORAXICA', 8: 'CIRURGIA VASCULAR', 9: 'CLINICA MEDICA', 10: 'DERMATOLOGIA', 11: 'ENDOCRINOLOGIA', 12: 'GASTROCIRURGIA', 13: 'GASTROENTEROLOGIA', 14: 'GERIATRIA', 15: 'GINECOLOGIA', 16: 'GINECOLOGIA/OBSTETRICIA', 17: 'HEMATOLOGIA', 18: 'INFECTOLOGIA', 19: 'NEFROLOGIA', 20: 'NEUROCIRURGIA', 21: 'NEUROLOGIA', 22: 'OFTALMOLOGIA', 23: 'ONCOLOGIA CIRURGICA', 24: 'ONCOLOGIA CLINICA', 25: 'ONCOLOGIA PEDIATRICA', 26: 'ORTOPEDIA', 27: 'OTORRINOLARINGOLOGIA', 28: 'PEDIATRIA', 29: 'PNEUMOLOGIA', 30: 'PROCTOLOGIA', 31: 'RADIOTERAPIA', 32: 'UROLOGIA', 33: 'MASTOLOGIA', 34: 'ONCOLOGIA CUTANEA', 35: 'CIRURGIA PELVICA', 36: 'CIRURGIA ABDOMINAL', 37: 'ODONTOLOGIA', 38: 'TRANSPLANTE HEPATICO', 99: 'IGNORADO'}
 
 # ==========================================
-# TELA DE BOAS VINDAS (Se não tiver arquivo)
+# BARRA LATERAL: SELETOR DE MODO
+# ==========================================
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/2965/2965306.png", width=60)
+    st.title("Plataforma FOSP RHC")
+    
+    # CHAVE SUPREMA: Altera o software de função
+    modo_sistema = st.selectbox("Selecione a Ferramenta:", ["📈 Observatório Oncológico", "🔄 Tradutor de Planilha Bruta"])
+    st.divider()
+
+    if modo_sistema == "🔄 Tradutor de Planilha Bruta":
+        st.subheader("Importar Arquivo Bruto")
+        planilha_codificada = st.file_uploader("📥 Envie a planilha FOSP com códigos", type=["xlsx", "xls"], key="tradutor_up")
+    else:
+        st.subheader("Importar Arquivo Traduzido")
+        arquivo_upado = st.file_uploader("📥 Envie a planilha FOSP traduzida", type=["xlsx", "xls"], key="observatorio_up")
+        st.divider()
+        st.header("⚙️ Configuração Demográfica")
+        filtro_sexo = st.selectbox("Filtro Global: Sexo", ['Ambos', 'MASCULINO', 'FEMININO'])
+
+    st.markdown("<br><br><br><br>", unsafe_allow_html=True)
+    st.caption("🔒 **Privacidade:** Os dados não são armazenados em nenhum servidor externo.")
+
+# ==========================================
+# FLUXO 1: AMBIENTE DO TRADUTOR AUTOMÁTICO
+# ==========================================
+if modo_sistema == "🔄 Tradutor de Planilha Bruta":
+    st.title("🔄 Tradutor Automatizado de Dados RHC/FOSP")
+    st.markdown("### Converta códigos numéricos do dicionário em dados textuais legíveis.")
+    
+    # BOTÃO DE FILTRO DE CASOS ANALÍTICOS
+    tipo_exportacao = st.radio(
+        "Selecione o escopo da base a ser gerada:",
+        ["Exportar Base Completa (Todos os Pacientes)", "Exportar Apenas Casos Analíticos (Exclui pacientes que chegaram já tratados)"],
+        horizontal=True
+    )
+    
+    if not planilha_codificada:
+        st.info("👈 **Insira a sua planilha original sem modificações na barra lateral para iniciar.**")
+        st.markdown("""
+        **Campos mapeados e traduzidos instantaneamente:**
+        * 👥 **Dados Demográficos:** Gênero (Sexo) e Grau de Instrução (Escolaridade).
+        * 🏥 **Admissão Hospitalar:** Tipo de Atendimento (SUS, Particular, Convênio) e Clínica de Diagnóstico.
+        * 💊 **Terapêutica:** Combinações de tratamento realizados dentro e fora da instituição.
+        * 📊 **Evolução:** Estado vital e status de seguimento na última informação do paciente.
+        """)
+    else:
+        with st.spinner("⚙️ Processando engenharia de dados e aplicando dicionários..."):
+            try:
+                xls_t = pd.ExcelFile(planilha_codificada)
+                sheet_t = next((s for s in xls_t.sheet_names if 'RHC' in s.upper() and 'ANAL' in s.upper()), xls_t.sheet_names[0])
+                df_t = pd.read_excel(xls_t, sheet_name=sheet_t)
+                
+                def traduzir_coluna(dataframe, coluna, dicionario):
+                    if coluna in dataframe.columns:
+                        dataframe[coluna] = pd.to_numeric(dataframe[coluna], errors='coerce').map(dicionario).fillna(dataframe[coluna])
+                
+                def traduzir_texto(dataframe, coluna, dicionario):
+                    if coluna in dataframe.columns:
+                        dataframe[coluna] = dataframe[coluna].astype(str).str.strip().map(dicionario).fillna(dataframe[coluna])
+
+                # Aplica as traduções estruturais
+                traduzir_coluna(df_t, 'SEXO', DIC_SEXO)
+                traduzir_coluna(df_t, 'ESCOLARI', DIC_ESCOLARIDADE)
+                traduzir_coluna(df_t, 'CATEATEND', DIC_ATENDIMENTO)
+                traduzir_coluna(df_t, 'DIAGPREV', DIC_DIAGPREV)
+                traduzir_coluna(df_t, 'BASEDIAG', DIC_BASEDIAG)
+                traduzir_coluna(df_t, 'ULTINFO', DIC_ULTINFO)
+                traduzir_coluna(df_t, 'LATERALI', DIC_LATERALIDADE)
+                traduzir_coluna(df_t, 'CLINICA', DIC_CLINICA)
+
+                # Traduz colunas booleanas binárias (0 e 1)
+                colunas_sim_nao = ['NENHUM', 'CIRURGIA', 'RADIO', 'QUIMIO', 'TMO', 'IMUNO', 'OUTROS','NENHUMANT', 'CIRURANT', 'RADIOANT', 'QUIMIOANT', 'TMOANT', 'IMUNOANT', 'OUTROANT','NENHUMAPOS', 'CIRURAPOS', 'RADIOAPOS', 'QUIMIOAPOS', 'TMOAPOS', 'IMUNOAPOS', 'OUTROAPOS','RECNENHUM', 'RECLOCAL', 'RECREGIO', 'RECDIST', 'PERDASEG']
+                for col in colunas_sim_nao: traduzir_coluna(df_t, col, DIC_SIM_NAO)
+
+                # Tratamentos hormonais e combos textuais (A, B, C...)
+                for col in ['HORMONIO', 'HORMOANT', 'HORMOAPOS']: traduzir_coluna(df_t, col, DIC_HORMONIO)
+                for col in ['TRATAMENTO', 'TRATHOSP', 'TRATFANTES', 'TRATFAPOS']: traduzir_texto(df_t, col, DIC_TRAT_COMBO)
+                
+                mensagem_extra = ""
+                # APLICAÇÃO DA REGRA DE NEGÓCIOS: FILTRO ANALÍTICO
+                if "Analíticos" in tipo_exportacao:
+                    if 'DIAGPREV' in df_t.columns:
+                        casos_permitidos = ['SEM DIAGNÓSTICO/SEM TRATAMENTO', 'COM DIAGNÓSTICO/SEM TRATAMENTO']
+                        df_t = df_t[df_t['DIAGPREV'].isin(casos_permitidos)]
+                        mensagem_extra = " (Filtro Exclusivo de Casos Analíticos Aplicado)"
+                
+                st.success(f"🎉 Sucesso! {len(df_t):,} pacientes processados e validados na base de dados{mensagem_extra}.".replace(",", "."))
+                
+                # Conversão em memória para download sem salvar lixo no servidor cloud
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_t.to_excel(writer, index=False, sheet_name=sheet_t)
+                
+                st.markdown("### 📥 Baixe seu arquivo pronto:")
+                st.download_button(
+                    label="💾 Fazer Download da Planilha Traduzida",
+                    data=buffer.getvalue(),
+                    file_name="Base_FOSP_Traduzida.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                st.info("💡 Após realizar o download, mude a chave seletora no topo esquerdo para **'Observatório Oncológico'** e envie este novo arquivo para ver as curvas e estatísticas!")
+            except Exception as e:
+                st.error(f"Erro no processamento da tradução: {e}")
+    st.stop()
+
+# ==========================================
+# FLUXO 2: TELA DE RECEPÇÃO DO OBSERVATÓRIO
 # ==========================================
 if not arquivo_upado:
     st.title("📊 Observatório Oncológico: Padrão Executivo")
@@ -43,7 +148,7 @@ if not arquivo_upado:
     
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.info("👈 **Para começar, arraste a planilha base do RHC no menu lateral.**")
+        st.info("👈 **Para começar, arraste a planilha traduzida no menu lateral.**")
         st.markdown("""
         **O que este sistema faz automaticamente:**
         * 🧹 **Higienização de Dados:** Identifica e corrige erros de digitação de RH (viagens no tempo, datas inconsistentes).
@@ -54,7 +159,7 @@ if not arquivo_upado:
     st.stop()
 
 # ==========================================
-# MOTOR DE DADOS DINÂMICO
+# MOTOR DE PROCESSAMENTO DO OBSERVATÓRIO
 # ==========================================
 @st.cache_data
 def carregar_dados(arquivo):
@@ -102,7 +207,6 @@ def carregar_dados(arquivo):
     df['Tempo_Meses'] = (df[col_fim] - df[col_diag]).dt.days / 30.4375
     df['Status_Evento'] = df[col_status].apply(lambda x: 1 if isinstance(x, str) and 'OBITO' in x.upper().replace('Ó', 'O') else 0)
     
-    # O motor agora é 100% livre de limite de tempo hardcoded
     df = df.dropna(subset=['Tempo_Meses', 'Status_Evento', col_diag])
     df = df[df['Tempo_Meses'] >= 0] 
     
@@ -124,7 +228,6 @@ def carregar_dados(arquivo):
         else: return 'Outros'
     df['Categoria_Atendimento'] = df[col_atendimento].apply(limpar_atendimento)
     
-    # Motor de Quinquênio 100% Matemático (Funciona para qualquer década passada ou futura)
     def definir_quinquenio(ano):
         if pd.isna(ano): return 'Outros'
         try:
@@ -221,26 +324,24 @@ def carregar_dados(arquivo):
     
     return df
 
-with st.spinner('Lendo arquivo e consolidando painel completo...'):
+with st.spinner('Lendo arquivo e abrindo o Observatório...'):
     try:
         df_base = carregar_dados(arquivo_upado)
     except Exception as e:
-        st.error(f"Erro na Leitura da Planilha!\n\nDetalhe do Sistema: {e}")
+        st.error(f"Erro na Leitura da Planilha! Verifique se você enviou o arquivo traduzido correto.\n\nDetalhe técnico: {e}")
         st.stop()
 
-# ==========================================
-# DESCOBERTA DINÂMICA DE ANOS DA PLANILHA
-# ==========================================
+# Configurações Dinâmicas de Data
 ano_min_df = int(df_base['Ano_Diag'].min())
 ano_max_df = int(df_base['Ano_Diag'].max())
 
+# ===== CORREÇÃO DO FILTRO DE SEXO =====
 df_filtrado = df_base.copy()
 if filtro_sexo != 'Ambos':
     df_filtrado = df_filtrado[df_filtrado['Sexo'] == filtro_sexo]
+# ======================================
 
-# ==========================================
-# ESTÉTICA E FUNÇÕES GERAIS
-# ==========================================
+# Configurações de Cores
 COR_AZUL_ESCURO = '#1a2b4c'
 COR_DOURADO = '#b8860b'
 CORES_SEXO = {'FEMININO': '#1a2b4c', 'MASCULINO': '#b8860b'}
@@ -268,25 +369,26 @@ def extrair_metrica_60_meses(k):
         else:
             l, u = s, s
         return s, l, u
-    except:
-        return 0.0, 0.0, 0.0
+    except: return 0.0, 0.0, 0.0
+
+TEXTO_AUDITORIA = """
+**Por que nossos números são diferentes de relatórios baseados em texto livre?**
+Para garantir o padrão ouro internacional, o nosso motor extrai os pacientes cruzando Topografia e Morfologia estritas segundo a **Classificação Internacional de Doenças para Oncologia (CID-O3)**:
+*   **Pele - Melanoma:** Exige restrição estrita a Pele (C44). Remove melanomas oculares ou de mucosas genitais.
+*   **Cólon e Reto:** Exige restrição a C18, C19 e C20. Exclui tumores de Ânus (C21) e Intestino Delgado (C17) que mudam o estadiamento.
+*   **Cavidade oral e orofaringe:** Varre apenas C01-C06, C09 e C10. Exclui Lábio externo (C00) e Glândulas Salivares (C07, C08).
+"""
 
 # Abas Superiores
-aba_perfil, aba_sobrevida, aba_jornada = st.tabs([
-    "👥 Perfil Epidemiológico", 
-    "📈 Gráficos (Sobrevida)", 
-    "⏱️ Jornada do Paciente"
-])
+aba_perfil, aba_sobrevida, aba_jornada = st.tabs(["👥 Perfil Epidemiológico", "📈 Gráficos (Sobrevida)", "⏱️ Jornada do Paciente"])
 
 # ==========================================
-# ABA 1: PERFIL EPIDEMIOLÓGICO
+# VISÃO: PERFIL EPIDEMIOLÓGICO
 # ==========================================
 with aba_perfil:
     st.markdown("### Selecione os Filtros de Análise")
-    
     col_f1, col_f2 = st.columns([1, 2])
     with col_f1:
-        # SLIDER DINÂMICO! Lê o tempo real da planilha do usuário
         anos_perfil = st.slider("Período de Análise:", min_value=ano_min_df, max_value=ano_max_df, value=(ano_min_df, ano_max_df))
     with col_f2:
         st.markdown("<br>", unsafe_allow_html=True)
@@ -298,7 +400,6 @@ with aba_perfil:
         
     st.divider()
     st.markdown(f"### Resumo Rápido (Coorte {texto_ano_titulo})")
-    
     col1, col2, col3 = st.columns(3)
     col1.metric("Total de Pacientes", f"{len(df_perfil):,}".replace(",", "."))
     col2.metric("Idade Média", f"{df_perfil['Idade Numérica'].mean():.1f} anos")
@@ -316,8 +417,7 @@ with aba_perfil:
             
             dados_tabela_top = []
             for grupo, count in top_data.items():
-                perc = (count / total_casos_perfil) * 100
-                dados_tabela_top.append({"Grupo de câncer": grupo, "Nº de casos": f"{count:,}".replace(",", "."), "N_raw": count, "% do total": f"{perc:.1f}%".replace(".", ",")})
+                dados_tabela_top.append({"Grupo de câncer": grupo, "Nº de casos": f"{count:,}".replace(",", "."), "N_raw": count, "% do total": f"{(count / total_casos_perfil) * 100:.1f}%".replace(".", ",")})
             df_top_final = pd.DataFrame(dados_tabela_top)
             
             fig_top, ax_top = plt.subplots(figsize=(12, 7))
@@ -331,22 +431,17 @@ with aba_perfil:
             for i, bar in enumerate(bars):
                 ax_top.text(df_top_final.iloc[i]['N_raw'] + (total_casos_perfil * 0.005), bar.get_y() + bar.get_height()/2, f"{df_top_final.iloc[i]['N_raw']:,}".replace(",", "."), va='center', ha='left', color='black', fontsize=9)
             st.pyplot(fig_top)
-            st.markdown(f"##### Tabela 2. Dez neoplasias mais frequentes, RHC, {texto_ano_titulo}.")
             st.dataframe(df_top_final.drop(columns=['N_raw']), use_container_width=True)
 
         elif visao_freq == "Top 10 Comparativo (Homens vs Mulheres)":
             st.markdown("### 📊 Top 10 Neoplasias: Comparativo Homens vs Mulheres")
-            if filtro_sexo != 'Ambos': st.info("💡 **Auditoria:** O Python isolou o filtro da barra lateral para garantir a comparação visual perfeita.")
-            
             df_comp = df_base_ano[df_base_ano['Macro_Topografia'] != 'Outros'].copy()
             top_10_gerais = df_comp['Macro_Topografia'].value_counts().head(10).index
-            df_comp_top = df_comp[df_comp['Macro_Topografia'].isin(top_10_gerais)]
-            tabela_sexo = pd.crosstab(df_comp_top['Macro_Topografia'], df_comp_top['Sexo'])
-            
+            tabela_sexo = pd.crosstab(df_comp[df_comp['Macro_Topografia'].isin(top_10_gerais)]['Macro_Topografia'], df_comp['Sexo'])
             if 'MASCULINO' not in tabela_sexo: tabela_sexo['MASCULINO'] = 0
             if 'FEMININO' not in tabela_sexo: tabela_sexo['FEMININO'] = 0
             tabela_sexo['Total'] = tabela_sexo['MASCULINO'] + tabela_sexo['FEMININO']
-            tabela_sexo = tabela_sexo.sort_values(by='Total', ascending=True) 
+            tabela_sexo = tabela_sexo.sort_values(by='Total', ascending=True)
             
             fig_comp, ax_comp = plt.subplots(figsize=(12, 8))
             y_coords = np.arange(len(tabela_sexo))
@@ -356,84 +451,67 @@ with aba_perfil:
             ax_comp.set_yticklabels(tabela_sexo.index, fontsize=11)
             ax_comp.spines['top'].set_visible(False)
             ax_comp.spines['right'].set_visible(False)
-            ax_comp.spines['left'].set_visible(False) 
-            ax_comp.axvline(0, color='black', linewidth=1) 
+            ax_comp.spines['left'].set_visible(False)
+            ax_comp.axvline(0, color='black', linewidth=1)
             ax_comp.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: f"{abs(int(x)):,}".replace(",", ".")))
-            ax_comp.set_xlabel('Número de casos', fontsize=11)
             ax_comp.set_title(f"Comparativo por Sexo das 10 Neoplasias Mais Frequentes — RHC, {texto_ano_titulo}", color=COR_AZUL_ESCURO, fontweight='bold', pad=20)
             
             max_val = tabela_sexo['Total'].max()
             for i, (masc, fem) in enumerate(zip(tabela_sexo['MASCULINO'], tabela_sexo['FEMININO'])):
-                if masc > 0: ax_comp.text(masc + (max_val * 0.01), i, f"{masc:,}".replace(",", "."), va='center', ha='left', color='black', fontsize=10)
-                if fem > 0: ax_comp.text(-fem - (max_val * 0.01), i, f"{fem:,}".replace(",", "."), va='center', ha='right', color='black', fontsize=10)
-            
+                if masc > 0: ax_comp.text(masc + (max_val * 0.01), i, f"{masc:,}".replace(",", "."), va='center')
+                if fem > 0: ax_comp.text(-fem - (max_val * 0.01), i, f"{fem:,}".replace(",", "."), va='center', ha='right')
             ax_comp.legend(loc='lower right', frameon=False)
             st.pyplot(fig_comp)
-            st.markdown(f"##### Tabela Comparativa de Frequência - Top 10 Neoplasias por Sexo, RHC, {texto_ano_titulo}.")
-            df_tabela_exibicao = tabela_sexo.copy().sort_values(by='Total', ascending=False).reset_index()[['Macro_Topografia', 'FEMININO', 'MASCULINO', 'Total']]
-            df_tabela_exibicao.rename(columns={'Macro_Topografia': 'Grupo de câncer', 'FEMININO': 'Feminino', 'MASCULINO': 'Masculino'}, inplace=True)
-            for col in ['Feminino', 'Masculino', 'Total']: df_tabela_exibicao[col] = df_tabela_exibicao[col].apply(lambda x: f"{x:,}".replace(",", "."))
-            st.dataframe(df_tabela_exibicao, use_container_width=True)
+            
+            df_tab_sex = tabela_sexo.copy().sort_values(by='Total', ascending=False).reset_index()[['Macro_Topografia', 'FEMININO', 'MASCULINO', 'Total']].rename(columns={'Macro_Topografia': 'Grupo de câncer', 'FEMININO': 'Feminino', 'MASCULINO': 'Masculino'})
+            for col in ['Feminino', 'Masculino', 'Total']: df_tab_sex[col] = df_tab_sex[col].apply(lambda x: f"{x:,}".replace(",", "."))
+            st.dataframe(df_tab_sex, use_container_width=True)
 
         elif visao_freq == "Todas as Neoplasias (Grupos Anatômicos)":
             st.markdown("### 📊 Frequência de TODAS as Neoplasias (Agrupamento CID-O3)")
             top_data = df_perfil['Macro_Topografia_Completa'].value_counts()
-            
             dados_tabela_top = []
             for grupo, count in top_data.items():
-                perc = (count / total_casos_perfil) * 100
-                dados_tabela_top.append({"Grupo Anatômico (CID-O3)": grupo, "Nº de casos": f"{count:,}".replace(",", "."), "N_raw": count, "% do total": f"{perc:.1f}%".replace(".", ",")})
+                dados_tabela_top.append({"Grupo Anatômico (CID-O3)": grupo, "Nº de casos": f"{count:,}".replace(",", "."), "N_raw": count, "% do total": f"{(count / total_casos_perfil) * 100:.1f}%".replace(".", ",")})
             df_top_final = pd.DataFrame(dados_tabela_top)
             
             fig_top, ax_top = plt.subplots(figsize=(12, max(8, len(top_data) * 0.35)))
-            y_coords = np.arange(len(top_data))[::-1] 
+            y_coords = np.arange(len(top_data))[::-1]
             bars = ax_top.barh(y_coords, df_top_final['N_raw'], color=[COR_AZUL_ESCURO] * len(top_data), edgecolor='white')
             ax_top.set_yticks(y_coords, labels=df_top_final["Grupo Anatômico (CID-O3)"], fontsize=9)
             ax_top.spines['top'].set_visible(False)
             ax_top.spines['right'].set_visible(False)
-            ax_top.set_xlabel('Número de casos', fontsize=11)
             ax_top.set_title(f"Ranking Completo de Grupos de Câncer — RHC, {texto_ano_titulo}\n(casos analíticos, {sexo_txt})", color=COR_AZUL_ESCURO, fontweight='bold', pad=15)
             for i, bar in enumerate(bars):
-                ax_top.text(df_top_final.iloc[i]['N_raw'] + (total_casos_perfil * 0.005), bar.get_y() + bar.get_height()/2, f"{df_top_final.iloc[i]['N_raw']:,}".replace(",", "."), va='center', ha='left', color='black', fontsize=9)
+                ax_top.text(df_top_final.iloc[i]['N_raw'] + (total_casos_perfil * 0.005), bar.get_y() + bar.get_height()/2, f"{df_top_final.iloc[i]['N_raw']:,}".replace(",", "."), va='center', ha='left', fontsize=9)
             st.pyplot(fig_top)
-            st.markdown(f"##### Tabela de Frequência - Todas as Neoplasias Agrupadas, RHC, {texto_ano_titulo}.")
             st.dataframe(df_top_final.drop(columns=['N_raw']), use_container_width=True)
 
         elif visao_freq == "Categoria de Atendimento (Pizza)":
             st.markdown("### 📊 Distribuição por Categoria de Atendimento (Admissão)")
             cat_data = df_perfil['Categoria_Atendimento'].value_counts()
-            
-            dados_tabela_cat = []
-            for cat, count in cat_data.items():
-                perc = (count / total_casos_perfil) * 100
-                dados_tabela_cat.append({"Categoria de Atendimento": cat, "Nº de casos": f"{count:,}".replace(",", "."), "N_raw": count, "% do total": f"{perc:.1f}%".replace(".", ",")})
-            df_cat_final = pd.DataFrame(dados_tabela_cat)
+            df_cat_final = pd.DataFrame([{"Categoria de Atendimento": cat, "Nº de casos": f"{count:,}".replace(",", "."), "% do total": f"{(count / total_casos_perfil) * 100:.1f}%".replace(".", ",")} for cat, count in cat_data.items()])
             
             mapa_cores_cat = {'SUS': COR_AZUL_ESCURO, 'Convênio (Saúde Suplementar)': COR_DOURADO, 'Particular': '#3a7a78', 'Não Informado': '#999999', 'Outros': '#4a4a4a'}
-            
             fig_pizza, ax_pizza = plt.subplots(figsize=(8, 8))
-            wedges, texts, autotexts = ax_pizza.pie(cat_data.values, labels=cat_data.index, autopct='%1.1f%%', startangle=140, colors=[mapa_cores_cat.get(c, '#999999') for c in cat_data.index], explode=[0.03] * len(cat_data), textprops={'fontsize': 11})
+            wedges, texts, autotexts = ax_pizza.pie(cat_data.values, labels=cat_data.index, autopct='%1.1f%%', startangle=140, colors=[mapa_cores_cat.get(c, '#999999') for c in cat_data.index], explode=[0.03] * len(cat_data))
             for autotext in autotexts:
                 autotext.set_color('white')
                 autotext.set_weight('bold')
-                
             ax_pizza.set_title(f"Categoria de Atendimento — RHC, {texto_ano_titulo}\n(casos analíticos, {sexo_txt})", color=COR_AZUL_ESCURO, fontweight='bold', pad=20)
             
             col_graf, col_tab = st.columns([1.2, 1])
             with col_graf: st.pyplot(fig_pizza)
             with col_tab:
                 st.markdown("<br><br>", unsafe_allow_html=True)
-                st.markdown(f"##### Tabela: Categoria de atendimento, RHC, {texto_ano_titulo}.")
-                st.dataframe(df_cat_final.drop(columns=['N_raw']), use_container_width=True)
+                st.dataframe(df_cat_final, use_container_width=True)
 
 # ==========================================
-# ABA 2: SOBREVIDA 
+# VISÃO: SOBREVIDA 
 # ==========================================
 with aba_sobrevida:
     st.markdown("### Selecione os Filtros de Sobrevida")
-    
     sugestao_max_sobrevida = max(ano_min_df, ano_max_df - 5)
-    
     col_s1, col_s2 = st.columns([1, 2])
     with col_s1:
         anos_sobrevida = st.slider("Coorte de Sobrevida (Diagnóstico):", min_value=ano_min_df, max_value=ano_max_df, value=(ano_min_df, sugestao_max_sobrevida))
@@ -441,7 +519,7 @@ with aba_sobrevida:
         st.markdown("<br>", unsafe_allow_html=True)
         tipo_grafico = st.radio("Selecione a visualização:", ["Curva Global (Fig 10)", "Curvas por Quinquênio", "Curvas por Sexo", "Curvas por Estádio Clínico", "Ranking 5 Anos", "Curvas por Doença Específica"], horizontal=True, label_visibility="collapsed")
     
-    st.info(f"💡 **Recomendação Metodológica:** Para avaliar sobrevivência em 5 anos de forma real, o ano limite de diagnóstico não deveria passar de **{sugestao_max_sobrevida}** para garantir seguimento pleno.")
+    st.info(f"💡 **Recomendação Metodológica:** Para avaliar sobrevivência em 5 anos, o limite aconselhável é **{sugestao_max_sobrevida}**.")
     st.divider()
     
     df_sobrevida_base = df_filtrado[(df_filtrado['Ano_Diag'] >= anos_sobrevida[0]) & (df_filtrado['Ano_Diag'] <= anos_sobrevida[1])].copy()
@@ -453,11 +531,11 @@ with aba_sobrevida:
         kmf = KaplanMeierFitter()
         if len(df_global) > 0:
             kmf.fit(durations=df_global['Tempo_Meses'], event_observed=df_global['Status_Evento'])
-            kmf.plot_survival_function(ax=ax, ci_show=True, ci_alpha=0.15, color=COR_AZUL_ESCURO, linewidth=2.5, legend=False)
+            kmf.plot_survival_function(ax=ax, ci_show=True, ci_alpha=0.15, color=COR_AZUL_ESCURO, linewidth=2.5)
             configurar_eixos_grafico(ax, f"Sobrevida global (Kaplan-Meier) — RHC, {titulo_coorte}\n(exclui pele não-melanoma) (n={len(df_global):,})".replace(",", "."))
             st.pyplot(fig)
             surv, low, up = extrair_metrica_60_meses(kmf)
-            st.dataframe(pd.DataFrame([{"Coorte": "Global (todos)", "Nº de casos": f"{len(df_global):,}".replace(",", "."), "Sobrevida em 5 anos": f"{surv:.1f}% (IC95% {low:.1f}%–{up:.1f}%)".replace(".", ",")}]), use_container_width=True)
+            st.dataframe(pd.DataFrame([{"Coorte": "Global", "Nº de casos": f"{len(df_global):,}".replace(",", "."), "Sobrevida em 5 anos": f"{surv:.1f}% (IC95% {low:.1f}%–{up:.1f}%)".replace(".", "Check")}]), use_container_width=True)
 
     elif tipo_grafico == "Curvas por Quinquênio":
         fig, ax = plt.subplots(figsize=(10, 6))
@@ -465,7 +543,6 @@ with aba_sobrevida:
         resultados_tabela = []
         quinquenios_atuais = sorted([q for q in df_global['Quinquenio'].unique() if q != 'Outros'])
         cores_dinamicas = [COR_AZUL_ESCURO, '#3a7a78', COR_DOURADO, '#7b2e3a', '#4a70a3', '#7590b1']
-        
         for i, q in enumerate(quinquenios_atuais):
             df_q = df_global[df_global['Quinquenio'] == q]
             if len(df_q) > 0:
@@ -474,7 +551,7 @@ with aba_sobrevida:
                 surv, _, _ = extrair_metrica_60_meses(kmf)
                 resultados_tabela.append({"Quinquênio": q, "Nº de casos": f"{len(df_q):,}".replace(",", "."), "Sobrevida em 5 anos": f"{surv:.1f}%".replace(".", ",")})
         configurar_eixos_grafico(ax, f"Sobrevida global por período — RHC, {titulo_coorte}\n(exclui pele não-melanoma)")
-        ax.legend(title="Período", frameon=False, loc='lower left')
+        ax.legend(frameon=False, loc='lower left')
         st.pyplot(fig)
         if resultados_tabela: st.dataframe(pd.DataFrame(resultados_tabela), use_container_width=True)
 
@@ -486,7 +563,7 @@ with aba_sobrevida:
             df_s = df_global[df_global['Sexo'] == sexo.upper()]
             if len(df_s) > 0:
                 kmf.fit(durations=df_s['Tempo_Meses'], event_observed=df_s['Status_Evento'], label=sexo)
-                kmf.plot_survival_function(ax=ax, ci_show=True, ci_alpha=0.15, color={'FEMININO': '#1a2b4c', 'MASCULINO': '#b8860b'}.get(sexo.upper()), linewidth=2)
+                kmf.plot_survival_function(ax=ax, ci_show=True, ci_alpha=0.15, color=CORES_SEXO.get(sexo.upper()), linewidth=2)
                 surv, low, up = extrair_metrica_60_meses(kmf)
                 resultados_tabela.append({"Sexo": sexo, "N_raw": len(df_s), "Nº de casos": f"{len(df_s):,}".replace(",", "."), "Sobrevida 5 anos": f"{surv:.1f}% (IC95% {low:.1f}%–{up:.1f}%)".replace(".", ",")})
         configurar_eixos_grafico(ax, f"Sobrevida global por sexo — RHC, {titulo_coorte}\n(exclui pele não-melanoma)")
@@ -518,7 +595,7 @@ with aba_sobrevida:
         if len(df_global) > 0:
             kmf.fit(durations=df_global['Tempo_Meses'], event_observed=df_global['Status_Evento'])
             s_g, l_g, u_g = extrair_metrica_60_meses(kmf)
-            dados_barras.append({'Grupo': 'Global', 'Surv': s_g, 'Err_L': s_g - l_g, 'Err_U': u_g - s_g})
+            dados_barras.append({'Grupo': 'Global (todos)', 'Surv': s_g, 'Err_L': s_g - l_g, 'Err_U': u_g - s_g})
         for grupo in ['Tireoide', 'Próstata', 'Mama', 'Colo do útero', 'Vulva', 'Corpo do útero', 'Pele - melanoma', 'Cólon e reto', 'Ovário', 'Cavidade oral e orofaringe']:
             df_g = df_sobrevida_base[df_sobrevida_base['Macro_Topografia'] == grupo]
             if len(df_g) > 10:
@@ -528,15 +605,13 @@ with aba_sobrevida:
                 dados_tabela.append({"Grupo de câncer": grupo, "N_raw": len(df_g), "Nº de casos": f"{len(df_g):,}".replace(",", "."), "Sobrevida 5 anos": f"{surv:.1f}% (IC95% {low:.1f}%–{up:.1f}%)".replace(".", ",")})
         if dados_barras:
             df_barras = pd.DataFrame(dados_barras).sort_values(by='Surv', ascending=True)
-            bars = ax.barh(np.arange(len(df_barras)), df_barras['Surv'], xerr=[df_barras['Err_L'], df_barras['Err_U']], color=[COR_DOURADO if g == 'Global' else COR_AZUL_ESCURO for g in df_barras['Grupo']], edgecolor='white', error_kw=dict(ecolor='gray', lw=1, capsize=3))
+            bars = ax.barh(np.arange(len(df_barras)), df_barras['Surv'], xerr=[df_barras['Err_L'], df_barras['Err_U']], color=[COR_DOURADO if g == 'Global (todos)' else COR_AZUL_ESCURO for g in df_barras['Grupo']], edgecolor='white', error_kw=dict(ecolor='gray', lw=1, capsize=3))
             ax.set_yticks(np.arange(len(df_barras)), labels=df_barras['Grupo'], fontsize=12)
-            
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             ax.set_xlabel('Sobrevida global estimada em 5 anos (%)', fontsize=11)
             ax.set_xlim(0, 105)
             ax.set_title(f"Sobrevida global em 5 anos — RHC, {titulo_coorte}", color=COR_AZUL_ESCURO, fontweight='bold', pad=15)
-            
             for bar, surv in zip(bars, df_barras['Surv']): ax.text(surv + 3, bar.get_y() + bar.get_height()/2, f'{surv:.1f}%'.replace('.', ','), va='center')
             st.pyplot(fig)
             st.dataframe(pd.DataFrame(dados_tabela).sort_values(by="N_raw", ascending=False).drop(columns=["N_raw"]), use_container_width=True)
@@ -549,25 +624,22 @@ with aba_sobrevida:
             fig, ax = plt.subplots(figsize=(10, 6))
             kmf = KaplanMeierFitter()
             kmf.fit(durations=df_doenca['Tempo_Meses'], event_observed=df_doenca['Status_Evento'])
-            kmf.plot_survival_function(ax=ax, ci_show=True, ci_alpha=0.15, color=COR_AZUL_ESCURO, linewidth=2.5, legend=False)
-            configurar_eixos_grafico(ax, f"{doenca_escolhida} (n={len(df_doenca):,}) — RHC, {titulo_coorte}".replace(",", "."))
+            kmf.plot_survival_function(ax=ax, ci_show=True, ci_alpha=0.15, color=COR_AZUL_ESCURO, linewidth=2.5)
+            configurar_eixos_grafico(ax, f"{doenca_escolhida} (n={len(df_doenca):,}) — RHC, {titulo_coorte}")
             st.pyplot(fig)
             surv, low, up = extrair_metrica_60_meses(kmf)
             st.dataframe(pd.DataFrame([{"Doença": doenca_escolhida, "Nº de casos": f"{len(df_doenca):,}".replace(",", "."), "Sobrevida 5 anos": f"{surv:.1f}% (IC95% {low:.1f}%–{up:.1f}%)".replace(".", ",")}]), use_container_width=True)
-        else: st.warning("⚠️ Não há casos registrados para os filtros aplicados.")
 
 # ==========================================
-# ABA 3: JORNADA DO PACIENTE
+# VISÃO: JORNADA DO PACIENTE
 # ==========================================
 with aba_jornada:
     st.markdown("### ⏱️ Tempo entre Consulta, Diagnóstico e Tratamento")
-    
     anos_jornada = st.slider("Período da Jornada Assistencial:", min_value=ano_min_df, max_value=ano_max_df, value=(ano_min_df, ano_max_df))
     st.markdown("""
     Abaixo estão os dados **auditados e higienizados** da trajetória assistencial. 
     O motor detecta e remove anomalias cronológicas de RH (dias negativos), garantindo métricas clinicamente reais.
     """)
-    
     df_jornada = df_filtrado[(df_filtrado['Ano_Diag'] >= anos_jornada[0]) & (df_filtrado['Ano_Diag'] <= anos_jornada[1])].copy()
     
     def calcular_metricas(serie_dias):
@@ -589,5 +661,4 @@ with aba_jornada:
         {"Intervalo": "Diagnóstico → início do tratamento", **m2},
         {"Intervalo": "1ª consulta → início do tratamento", **m3}
     ])
-    
     st.dataframe(tabela_jornada, use_container_width=True, hide_index=True)
