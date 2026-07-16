@@ -32,6 +32,18 @@ DIC_LATERALIDADE = {1: 'DIREITA', 2: 'ESQUERDA', 3: 'BILATERAL', 8: 'NÃO SE APL
 DIC_TRAT_COMBO = {'A': 'Cirurgia', 'B': 'Radioterapia', 'C': 'Quimioterapia', 'D': 'Cirurgia + Radioterapia', 'E': 'Cirurgia + Quimioterapia', 'F': 'Radioterapia + Quimioterapia', 'G': 'Cirurgia + Radio + Quimio', 'H': 'Cirurgia + Radio + Quimio + Hormonio', 'I': 'Outras combinações', 'J': 'Nenhum tratamento'}
 DIC_CLINICA = {1: 'ALERGIA/IMUNOLOGIA', 2: 'CIRURGIA CARDIACA', 3: 'CIRURGIA CABEÇA E PESCOÇO', 4: 'CIRURGIA GERAL', 5: 'CIRURGIA PEDIATRICA', 6: 'CIRURGIA PLASTICA', 7: 'CIRURGIA TORAXICA', 8: 'CIRURGIA VASCULAR', 9: 'CLINICA MEDICA', 10: 'DERMATOLOGIA', 11: 'ENDOCRINOLOGIA', 12: 'GASTROCIRURGIA', 13: 'GASTROENTEROLOGIA', 14: 'GERIATRIA', 15: 'GINECOLOGIA', 16: 'GINECOLOGIA/OBSTETRICIA', 17: 'HEMATOLOGIA', 18: 'INFECTOLOGIA', 19: 'NEFROLOGIA', 20: 'NEUROCIRURGIA', 21: 'NEUROLOGIA', 22: 'OFTALMOLOGIA', 23: 'ONCOLOGIA CIRURGICA', 24: 'ONCOLOGIA CLINICA', 25: 'ONCOLOGIA PEDIATRICA', 26: 'ORTOPEDIA', 27: 'OTORRINOLARINGOLOGIA', 28: 'PEDIATRIA', 29: 'PNEUMOLOGIA', 30: 'PROCTOLOGIA', 31: 'RADIOTERAPIA', 32: 'UROLOGIA', 33: 'MASTOLOGIA', 34: 'ONCOLOGIA CUTANEA', 35: 'CIRURGIA PELVICA', 36: 'CIRURGIA ABDOMINAL', 37: 'ODONTOLOGIA', 38: 'TRANSPLANTE HEPATICO', 99: 'IGNORADO'}
 
+# Função Auxiliar para Download de Gráficos
+def download_plot(fig, filename):
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight", dpi=300)
+    buf.seek(0)
+    st.download_button(
+        label="📥 Baixar Gráfico (PNG)",
+        data=buf,
+        file_name=filename,
+        mime="image/png"
+    )
+
 # ==========================================
 # BARRA LATERAL: SELETOR DE MODO
 # ==========================================
@@ -52,6 +64,7 @@ with st.sidebar:
         st.divider()
         st.header("⚙️ Configuração Demográfica")
         filtro_sexo = st.selectbox("Filtro Global: Sexo", ['Ambos', 'MASCULINO', 'FEMININO'])
+        filtro_estadio = st.selectbox("Filtro Global: Estádio Clínico", ['Todos', '0 (in situ)', 'I', 'II', 'III', 'IV', 'Outros'])
 
     st.markdown("<br><br><br><br>", unsafe_allow_html=True)
     st.caption("🔒 **Privacidade:** Os dados não são armazenados em nenhum servidor externo.")
@@ -335,11 +348,13 @@ with st.spinner('Lendo arquivo e abrindo o Observatório...'):
 ano_min_df = int(df_base['Ano_Diag'].min())
 ano_max_df = int(df_base['Ano_Diag'].max())
 
-# ===== CORREÇÃO DO FILTRO DE SEXO =====
+# ===== APLICAÇÃO DOS FILTROS GLOBAIS =====
 df_filtrado = df_base.copy()
 if filtro_sexo != 'Ambos':
     df_filtrado = df_filtrado[df_filtrado['Sexo'] == filtro_sexo]
-# ======================================
+if filtro_estadio != 'Todos':
+    df_filtrado = df_filtrado[df_filtrado['Estadio_Clinico'] == filtro_estadio]
+# ==========================================
 
 # Configurações de Cores
 COR_AZUL_ESCURO = '#1a2b4c'
@@ -431,6 +446,7 @@ with aba_perfil:
             for i, bar in enumerate(bars):
                 ax_top.text(df_top_final.iloc[i]['N_raw'] + (total_casos_perfil * 0.005), bar.get_y() + bar.get_height()/2, f"{df_top_final.iloc[i]['N_raw']:,}".replace(",", "."), va='center', ha='left', color='black', fontsize=9)
             st.pyplot(fig_top)
+            download_plot(fig_top, "Top10_Neoplasias.png")
             st.dataframe(df_top_final.drop(columns=['N_raw']), use_container_width=True)
 
         elif visao_freq == "Top 10 Comparativo (Homens vs Mulheres)":
@@ -462,6 +478,7 @@ with aba_perfil:
                 if fem > 0: ax_comp.text(-fem - (max_val * 0.01), i, f"{fem:,}".replace(",", "."), va='center', ha='right')
             ax_comp.legend(loc='lower right', frameon=False)
             st.pyplot(fig_comp)
+            download_plot(fig_comp, "Top10_Comparativo_Sexo.png")
             
             df_tab_sex = tabela_sexo.copy().sort_values(by='Total', ascending=False).reset_index()[['Macro_Topografia', 'FEMININO', 'MASCULINO', 'Total']].rename(columns={'Macro_Topografia': 'Grupo de câncer', 'FEMININO': 'Feminino', 'MASCULINO': 'Masculino'})
             for col in ['Feminino', 'Masculino', 'Total']: df_tab_sex[col] = df_tab_sex[col].apply(lambda x: f"{x:,}".replace(",", "."))
@@ -485,6 +502,7 @@ with aba_perfil:
             for i, bar in enumerate(bars):
                 ax_top.text(df_top_final.iloc[i]['N_raw'] + (total_casos_perfil * 0.005), bar.get_y() + bar.get_height()/2, f"{df_top_final.iloc[i]['N_raw']:,}".replace(",", "."), va='center', ha='left', fontsize=9)
             st.pyplot(fig_top)
+            download_plot(fig_top, "Ranking_Completo_CID.png")
             st.dataframe(df_top_final.drop(columns=['N_raw']), use_container_width=True)
 
         elif visao_freq == "Categoria de Atendimento (Pizza)":
@@ -501,7 +519,9 @@ with aba_perfil:
             ax_pizza.set_title(f"Categoria de Atendimento — RHC, {texto_ano_titulo}\n(casos analíticos, {sexo_txt})", color=COR_AZUL_ESCURO, fontweight='bold', pad=20)
             
             col_graf, col_tab = st.columns([1.2, 1])
-            with col_graf: st.pyplot(fig_pizza)
+            with col_graf:
+                st.pyplot(fig_pizza)
+                download_plot(fig_pizza, "Categoria_Atendimento.png")
             with col_tab:
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.dataframe(df_cat_final, use_container_width=True)
@@ -534,6 +554,7 @@ with aba_sobrevida:
             kmf.plot_survival_function(ax=ax, ci_show=True, ci_alpha=0.15, color=COR_AZUL_ESCURO, linewidth=2.5)
             configurar_eixos_grafico(ax, f"Sobrevida global (Kaplan-Meier) — RHC, {titulo_coorte}\n(exclui pele não-melanoma) (n={len(df_global):,})".replace(",", "."))
             st.pyplot(fig)
+            download_plot(fig, "Sobrevida_Global.png")
             surv, low, up = extrair_metrica_60_meses(kmf)
             st.dataframe(pd.DataFrame([{"Coorte": "Global", "Nº de casos": f"{len(df_global):,}".replace(",", "."), "Sobrevida em 5 anos": f"{surv:.1f}% (IC95% {low:.1f}%–{up:.1f}%)".replace(".", "Check")}]), use_container_width=True)
 
@@ -553,6 +574,7 @@ with aba_sobrevida:
         configurar_eixos_grafico(ax, f"Sobrevida global por período — RHC, {titulo_coorte}\n(exclui pele não-melanoma)")
         ax.legend(frameon=False, loc='lower left')
         st.pyplot(fig)
+        download_plot(fig, "Sobrevida_Quinquenio.png")
         if resultados_tabela: st.dataframe(pd.DataFrame(resultados_tabela), use_container_width=True)
 
     elif tipo_grafico == "Curvas por Sexo":
@@ -569,6 +591,7 @@ with aba_sobrevida:
         configurar_eixos_grafico(ax, f"Sobrevida global por sexo — RHC, {titulo_coorte}\n(exclui pele não-melanoma)")
         ax.legend(frameon=False, loc='upper right')
         st.pyplot(fig)
+        download_plot(fig, "Sobrevida_Sexo.png")
         if resultados_tabela: st.dataframe(pd.DataFrame(resultados_tabela).sort_values(by="N_raw", ascending=False).drop(columns=["N_raw"]), use_container_width=True)
 
     elif tipo_grafico == "Curvas por Estádio Clínico":
@@ -586,6 +609,7 @@ with aba_sobrevida:
         configurar_eixos_grafico(ax, f"Sobrevida global por estádio — RHC, {titulo_coorte}")
         ax.legend(frameon=False, loc='lower left')
         st.pyplot(fig)
+        download_plot(fig, "Sobrevida_Estadio.png")
         st.dataframe(pd.DataFrame(resultados_tabela), use_container_width=True)
 
     elif tipo_grafico == "Ranking 5 Anos":
@@ -614,6 +638,7 @@ with aba_sobrevida:
             ax.set_title(f"Sobrevida global em 5 anos — RHC, {titulo_coorte}", color=COR_AZUL_ESCURO, fontweight='bold', pad=15)
             for bar, surv in zip(bars, df_barras['Surv']): ax.text(surv + 3, bar.get_y() + bar.get_height()/2, f'{surv:.1f}%'.replace('.', ','), va='center')
             st.pyplot(fig)
+            download_plot(fig, "Ranking_Sobrevida_5Anos.png")
             st.dataframe(pd.DataFrame(dados_tabela).sort_values(by="N_raw", ascending=False).drop(columns=["N_raw"]), use_container_width=True)
 
     elif tipo_grafico == "Curvas por Doença Específica":
@@ -627,6 +652,7 @@ with aba_sobrevida:
             kmf.plot_survival_function(ax=ax, ci_show=True, ci_alpha=0.15, color=COR_AZUL_ESCURO, linewidth=2.5)
             configurar_eixos_grafico(ax, f"{doenca_escolhida} (n={len(df_doenca):,}) — RHC, {titulo_coorte}")
             st.pyplot(fig)
+            download_plot(fig, f"Sobrevida_{doenca_escolhida.replace(' ', '_')}.png")
             surv, low, up = extrair_metrica_60_meses(kmf)
             st.dataframe(pd.DataFrame([{"Doença": doenca_escolhida, "Nº de casos": f"{len(df_doenca):,}".replace(",", "."), "Sobrevida 5 anos": f"{surv:.1f}% (IC95% {low:.1f}%–{up:.1f}%)".replace(".", ",")}]), use_container_width=True)
 
