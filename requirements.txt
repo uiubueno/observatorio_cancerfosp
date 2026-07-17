@@ -6,3 +6,4 @@ lifelines
 openpyxl
 plotly
 requests
+kaleido
