@@ -4,6 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from lifelines import KaplanMeierFitter
+import plotly.express as px
+import requests
 import io
 
 # ==========================================
@@ -32,13 +34,41 @@ DIC_LATERALIDADE = {1: 'DIREITA', 2: 'ESQUERDA', 3: 'BILATERAL', 8: 'NÃO SE APL
 DIC_TRAT_COMBO = {'A': 'Cirurgia', 'B': 'Radioterapia', 'C': 'Quimioterapia', 'D': 'Cirurgia + Radioterapia', 'E': 'Cirurgia + Quimioterapia', 'F': 'Radioterapia + Quimioterapia', 'G': 'Cirurgia + Radio + Quimio', 'H': 'Cirurgia + Radio + Quimio + Hormonio', 'I': 'Outras combinações', 'J': 'Nenhum tratamento'}
 DIC_CLINICA = {1: 'ALERGIA/IMUNOLOGIA', 2: 'CIRURGIA CARDIACA', 3: 'CIRURGIA CABEÇA E PESCOÇO', 4: 'CIRURGIA GERAL', 5: 'CIRURGIA PEDIATRICA', 6: 'CIRURGIA PLASTICA', 7: 'CIRURGIA TORAXICA', 8: 'CIRURGIA VASCULAR', 9: 'CLINICA MEDICA', 10: 'DERMATOLOGIA', 11: 'ENDOCRINOLOGIA', 12: 'GASTROCIRURGIA', 13: 'GASTROENTEROLOGIA', 14: 'GERIATRIA', 15: 'GINECOLOGIA', 16: 'GINECOLOGIA/OBSTETRICIA', 17: 'HEMATOLOGIA', 18: 'INFECTOLOGIA', 19: 'NEFROLOGIA', 20: 'NEUROCIRURGIA', 21: 'NEUROLOGIA', 22: 'OFTALMOLOGIA', 23: 'ONCOLOGIA CIRURGICA', 24: 'ONCOLOGIA CLINICA', 25: 'ONCOLOGIA PEDIATRICA', 26: 'ORTOPEDIA', 27: 'OTORRINOLARINGOLOGIA', 28: 'PEDIATRIA', 29: 'PNEUMOLOGIA', 30: 'PROCTOLOGIA', 31: 'RADIOTERAPIA', 32: 'UROLOGIA', 33: 'MASTOLOGIA', 34: 'ONCOLOGIA CUTANEA', 35: 'CIRURGIA PELVICA', 36: 'CIRURGIA ABDOMINAL', 37: 'ODONTOLOGIA', 38: 'TRANSPLANTE HEPATICO', 99: 'IGNORADO'}
 
-# Função Auxiliar para Download de Gráficos
+# Códigos IBGE dos 38 municípios da Região Metropolitana de SP (Excluindo a Capital 3550308)
+IBGE_RMSP = [
+    '3503901', '3505708', '3506607', '3509007', '3509205', '3510609', '3513009', '3513801',
+    '3515004', '3515103', '3515707', '3516309', '3516408', '3518305', '3518800', '3522208',
+    '3522505', '3523107', '3525003', '3526209', '3528502', '3529401', '3530607', '3534401',
+    '3539301', '3539806', '3543303', '3543402', '3545001', '3546801', '3547304', '3547809',
+    '3548708', '3548807', '3550001', '3552502', '3552809', '3556404'
+]
+
+# Download da Malha de Municípios do IBGE (Para o Mapa)
+@st.cache_data
+def carregar_malha_sp():
+    url = "https://raw.githubusercontent.com/tbrugz/geodata-br/master/geojson/geojs-35-mun.json"
+    try:
+        return requests.get(url).json()
+    except:
+        return None
+
+# ==========================================
+# MOTOR DE EXPORTAÇÃO INTELIGENTE (SUPORTA MAPAS E GRÁFICOS)
+# ==========================================
 def download_plot(fig, filename):
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", dpi=300)
+    try:
+        if hasattr(fig, 'savefig'): # Gráficos Matplotlib
+            fig.savefig(buf, format="png", bbox_inches="tight", dpi=300)
+        elif hasattr(fig, 'write_image'): # Mapas Plotly
+            fig.write_image(buf, format="png", scale=3)
+    except Exception as e:
+        st.error(f"Erro ao gerar imagem. Se for o mapa, certifique-se de ter rodado 'python3 -m pip install kaleido' no terminal! Detalhe: {e}")
+        return
+        
     buf.seek(0)
     st.download_button(
-        label="📥 Baixar Gráfico (PNG)",
+        label="📥 Baixar Gráfico/Mapa (PNG)",
         data=buf,
         file_name=filename,
         mime="image/png"
@@ -51,7 +81,6 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2965/2965306.png", width=60)
     st.title("Plataforma FOSP RHC")
     
-    # CHAVE SUPREMA: Altera o software de função
     modo_sistema = st.selectbox("Selecione a Ferramenta:", ["📈 Observatório Oncológico", "🔄 Tradutor de Planilha Bruta"])
     st.divider()
 
@@ -64,7 +93,7 @@ with st.sidebar:
         st.divider()
         st.header("⚙️ Configuração Demográfica")
         filtro_sexo = st.selectbox("Filtro Global: Sexo", ['Ambos', 'MASCULINO', 'FEMININO'])
-        filtro_estadio = st.selectbox("Filtro Global: Estádio Clínico", ['Todos', '0 (in situ)', 'I', 'II', 'III', 'IV', 'Outros'])
+        filtro_estadio = st.selectbox("Filtro Global: Estádio Clínico", ['Todos', 'Todos (exceto 0 in situ)', '0 (in situ)', 'I', 'II', 'III', 'IV', 'Outros'])
 
     st.markdown("<br><br><br><br>", unsafe_allow_html=True)
     st.caption("🔒 **Privacidade:** Os dados não são armazenados em nenhum servidor externo.")
@@ -76,7 +105,6 @@ if modo_sistema == "🔄 Tradutor de Planilha Bruta":
     st.title("🔄 Tradutor Automatizado de Dados RHC/FOSP")
     st.markdown("### Converta códigos numéricos do dicionário em dados textuais legíveis.")
     
-    # BOTÃO DE FILTRO DE CASOS ANALÍTICOS
     tipo_exportacao = st.radio(
         "Selecione o escopo da base a ser gerada:",
         ["Exportar Base Completa (Todos os Pacientes)", "Exportar Apenas Casos Analíticos (Exclui pacientes que chegaram já tratados)"],
@@ -107,7 +135,6 @@ if modo_sistema == "🔄 Tradutor de Planilha Bruta":
                     if coluna in dataframe.columns:
                         dataframe[coluna] = dataframe[coluna].astype(str).str.strip().map(dicionario).fillna(dataframe[coluna])
 
-                # Aplica as traduções estruturais
                 traduzir_coluna(df_t, 'SEXO', DIC_SEXO)
                 traduzir_coluna(df_t, 'ESCOLARI', DIC_ESCOLARIDADE)
                 traduzir_coluna(df_t, 'CATEATEND', DIC_ATENDIMENTO)
@@ -117,16 +144,13 @@ if modo_sistema == "🔄 Tradutor de Planilha Bruta":
                 traduzir_coluna(df_t, 'LATERALI', DIC_LATERALIDADE)
                 traduzir_coluna(df_t, 'CLINICA', DIC_CLINICA)
 
-                # Traduz colunas booleanas binárias (0 e 1)
                 colunas_sim_nao = ['NENHUM', 'CIRURGIA', 'RADIO', 'QUIMIO', 'TMO', 'IMUNO', 'OUTROS','NENHUMANT', 'CIRURANT', 'RADIOANT', 'QUIMIOANT', 'TMOANT', 'IMUNOANT', 'OUTROANT','NENHUMAPOS', 'CIRURAPOS', 'RADIOAPOS', 'QUIMIOAPOS', 'TMOAPOS', 'IMUNOAPOS', 'OUTROAPOS','RECNENHUM', 'RECLOCAL', 'RECREGIO', 'RECDIST', 'PERDASEG']
                 for col in colunas_sim_nao: traduzir_coluna(df_t, col, DIC_SIM_NAO)
 
-                # Tratamentos hormonais e combos textuais (A, B, C...)
                 for col in ['HORMONIO', 'HORMOANT', 'HORMOAPOS']: traduzir_coluna(df_t, col, DIC_HORMONIO)
                 for col in ['TRATAMENTO', 'TRATHOSP', 'TRATFANTES', 'TRATFAPOS']: traduzir_texto(df_t, col, DIC_TRAT_COMBO)
                 
                 mensagem_extra = ""
-                # APLICAÇÃO DA REGRA DE NEGÓCIOS: FILTRO ANALÍTICO
                 if "Analíticos" in tipo_exportacao:
                     if 'DIAGPREV' in df_t.columns:
                         casos_permitidos = ['SEM DIAGNÓSTICO/SEM TRATAMENTO', 'COM DIAGNÓSTICO/SEM TRATAMENTO']
@@ -135,7 +159,6 @@ if modo_sistema == "🔄 Tradutor de Planilha Bruta":
                 
                 st.success(f"🎉 Sucesso! {len(df_t):,} pacientes processados e validados na base de dados{mensagem_extra}.".replace(",", "."))
                 
-                # Conversão em memória para download sem salvar lixo no servidor cloud
                 buffer = io.BytesIO()
                 with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                     df_t.to_excel(writer, index=False, sheet_name=sheet_t)
@@ -208,6 +231,10 @@ def carregar_dados(arquivo):
     col_atendimento = achar_coluna(['CATEATEND', 'CATEGORIA DE ATENDIMENTO', 'ATENDIMENTO'])
     col_cons = achar_coluna(['DTCONSULT', 'DATA DA PRIMEIRA CONSULTA', 'CONSULTA'])
     col_trat = achar_coluna(['DTTRAT', 'DATA DO INÍCIO DO PRIMEIRO TRATAMENTO', 'DATA DO INICIO DO PRIMEIRO TRATAMENTO', 'TRATAMENTO'])
+    col_basediag = achar_coluna(['BASEDIAG', 'BASE DE DIAGNÓSTICO', 'BASE DE DIAGNOSTICO'])
+    col_uf = achar_coluna(['UFRESID', 'UF DE RESIDÊNCIA', 'ESTADO'])
+    col_ibge = achar_coluna(['IBGE', 'CÓDIGO IBGE'])
+    col_cidade = achar_coluna(['CIDADE', 'MUNICÍPIO DE RESIDÊNCIA', 'MUNICIPIO'])
     
     if col_diag not in df.columns:
         raise ValueError(f"O painel não achou a coluna '{col_diag}'. Verifique se o Excel possui cabeçalhos formatados.")
@@ -231,6 +258,15 @@ def carregar_dados(arquivo):
     df['Dias_Diag_Trat'] = (df[col_trat] - df[col_diag]).dt.days
     df['Dias_Cons_Trat'] = (df[col_trat] - df[col_cons]).dt.days
     
+    if col_uf in df.columns: df['UFRESID'] = df[col_uf].astype(str).str.upper().str.strip()
+    else: df['UFRESID'] = 'SP'
+    
+    if col_ibge in df.columns: df['IBGE'] = df[col_ibge].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    else: df['IBGE'] = '0'
+        
+    if col_cidade in df.columns: df['CIDADE'] = df[col_cidade].astype(str).str.upper().str.strip()
+    else: df['CIDADE'] = 'NÃO INFORMADO'
+    
     def limpar_atendimento(x):
         val = str(x).upper().strip()
         if val.endswith('.0'): val = val[:-2]
@@ -241,13 +277,18 @@ def carregar_dados(arquivo):
         else: return 'Outros'
     df['Categoria_Atendimento'] = df[col_atendimento].apply(limpar_atendimento)
     
+    def agrupar_basediag(x):
+        val = str(x).upper().strip()
+        if 'CONFIRMA' in val and 'MICROSC' in val: return 'Confirmação Microscópica'
+        else: return 'Outros'
+    df['Base_Diagnostico'] = df[col_basediag].apply(agrupar_basediag)
+    
     def definir_quinquenio(ano):
         if pd.isna(ano): return 'Outros'
         try:
             inicio = int(ano) - (int(ano) % 5)
             return f"{inicio}-{inicio+4}"
-        except:
-            return 'Outros'
+        except: return 'Outros'
     df['Quinquenio'] = df['Ano_Diag'].apply(definir_quinquenio)
     
     def agrupar_macro_topografia(linha):
@@ -268,8 +309,8 @@ def carregar_dados(arquivo):
 
     def agrupar_macro_completa(linha):
         cod_topo = str(linha.get(col_topo_cod, '')).upper().strip()
-        morfo_desc = str(linha.get(col_morfo, '')).upper()
         c3 = cod_topo[:3]
+        morfo_desc = str(linha.get(col_morfo, '')).upper()
         if c3 == 'C50': return 'Mama'
         elif c3 == 'C73': return 'Tireoide'
         elif c3 == 'C61': return 'Próstata'
@@ -352,7 +393,10 @@ ano_max_df = int(df_base['Ano_Diag'].max())
 df_filtrado = df_base.copy()
 if filtro_sexo != 'Ambos':
     df_filtrado = df_filtrado[df_filtrado['Sexo'] == filtro_sexo]
-if filtro_estadio != 'Todos':
+
+if filtro_estadio == 'Todos (exceto 0 in situ)':
+    df_filtrado = df_filtrado[df_filtrado['Estadio_Clinico'] != '0 (in situ)']
+elif filtro_estadio != 'Todos':
     df_filtrado = df_filtrado[df_filtrado['Estadio_Clinico'] == filtro_estadio]
 # ==========================================
 
@@ -365,9 +409,10 @@ CORES_TOP10 = ['#1a2b4c', '#3a7a78', '#b8860b', '#7b2e3a', '#4a70a3', '#7590b1',
 def configurar_eixos_grafico(ax, titulo):
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    ax.set_title(titulo, color=COR_AZUL_ESCURO, fontweight='bold', pad=15)
-    ax.set_xlabel('Meses desde o diagnóstico', fontsize=11)
-    ax.set_ylabel('Probabilidade de sobrevida', fontsize=11)
+    ax.set_title(titulo, color=COR_AZUL_ESCURO, fontweight='bold', pad=20, fontsize=18)
+    ax.set_xlabel('Meses desde o diagnóstico', fontsize=14)
+    ax.set_ylabel('Probabilidade de sobrevida', fontsize=14)
+    ax.tick_params(axis='both', which='major', labelsize=12)
     ax.set_xlim(0, 180)
     ax.set_ylim(0, 1.05)
     ax.axvline(x=60, color='gray', linestyle='--', linewidth=1, alpha=0.7)
@@ -407,7 +452,7 @@ with aba_perfil:
         anos_perfil = st.slider("Período de Análise:", min_value=ano_min_df, max_value=ano_max_df, value=(ano_min_df, ano_max_df))
     with col_f2:
         st.markdown("<br>", unsafe_allow_html=True)
-        visao_freq = st.radio("Visão do Ranking:", ["Top 10 Grupos Principais", "Top 10 Comparativo (Homens vs Mulheres)", "Todas as Neoplasias (Grupos Anatômicos)", "Categoria de Atendimento (Pizza)"], horizontal=True, label_visibility="collapsed")
+        visao_freq = st.radio("Visão do Ranking:", ["Top 10 Grupos Principais", "Top 10 Comparativo (Homens vs Mulheres)", "Todas as Neoplasias (Grupos Anatômicos)", "Categoria de Atendimento (Pizza)", "Base de Diagnóstico (Barras)", "Distribuição Geográfica (Mapa)"], horizontal=True, label_visibility="collapsed")
     
     df_perfil = df_filtrado[(df_filtrado['Ano_Diag'] >= anos_perfil[0]) & (df_filtrado['Ano_Diag'] <= anos_perfil[1])]
     df_base_ano = df_base[(df_base['Ano_Diag'] >= anos_perfil[0]) & (df_base['Ano_Diag'] <= anos_perfil[1])].copy()
@@ -438,13 +483,13 @@ with aba_perfil:
             fig_top, ax_top = plt.subplots(figsize=(12, 7))
             y_coords = np.arange(len(top_data))[::-1] 
             bars = ax_top.barh(y_coords, df_top_final['N_raw'], color=CORES_TOP10[:len(top_data)], edgecolor='white')
-            ax_top.set_yticks(y_coords, labels=df_top_final["Grupo de câncer"], fontsize=11)
+            ax_top.set_yticks(y_coords, labels=df_top_final["Grupo de câncer"], fontsize=14)
             ax_top.spines['top'].set_visible(False)
             ax_top.spines['right'].set_visible(False)
-            ax_top.set_xlabel('Número de casos', fontsize=11)
-            ax_top.set_title(f"10 neoplasias mais frequentes — RHC, {texto_ano_titulo}\n(casos analíticos, {sexo_txt})", color=COR_AZUL_ESCURO, fontweight='bold', pad=15)
+            ax_top.set_xlabel('Número de casos', fontsize=14)
+            ax_top.set_title(f"10 neoplasias mais frequentes — RHC, {texto_ano_titulo}\n(casos analíticos, {sexo_txt})", color=COR_AZUL_ESCURO, fontweight='bold', pad=15, fontsize=18)
             for i, bar in enumerate(bars):
-                ax_top.text(df_top_final.iloc[i]['N_raw'] + (total_casos_perfil * 0.005), bar.get_y() + bar.get_height()/2, f"{df_top_final.iloc[i]['N_raw']:,}".replace(",", "."), va='center', ha='left', color='black', fontsize=9)
+                ax_top.text(df_top_final.iloc[i]['N_raw'] + (total_casos_perfil * 0.005), bar.get_y() + bar.get_height()/2, f"{df_top_final.iloc[i]['N_raw']:,}".replace(",", "."), va='center', ha='left', color='black', fontsize=12)
             st.pyplot(fig_top)
             download_plot(fig_top, "Top10_Neoplasias.png")
             st.dataframe(df_top_final.drop(columns=['N_raw']), use_container_width=True)
@@ -464,19 +509,19 @@ with aba_perfil:
             ax_comp.barh(y_coords, tabela_sexo['MASCULINO'], color=CORES_SEXO['MASCULINO'], label='Masculino', edgecolor='white')
             ax_comp.barh(y_coords, -tabela_sexo['FEMININO'], color=CORES_SEXO['FEMININO'], label='Feminino', edgecolor='white')
             ax_comp.set_yticks(y_coords)
-            ax_comp.set_yticklabels(tabela_sexo.index, fontsize=11)
+            ax_comp.set_yticklabels(tabela_sexo.index, fontsize=13)
             ax_comp.spines['top'].set_visible(False)
             ax_comp.spines['right'].set_visible(False)
             ax_comp.spines['left'].set_visible(False)
             ax_comp.axvline(0, color='black', linewidth=1)
             ax_comp.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: f"{abs(int(x)):,}".replace(",", ".")))
-            ax_comp.set_title(f"Comparativo por Sexo das 10 Neoplasias Mais Frequentes — RHC, {texto_ano_titulo}", color=COR_AZUL_ESCURO, fontweight='bold', pad=20)
+            ax_comp.set_title(f"Comparativo por Sexo das 10 Neoplasias Mais Frequentes — RHC, {texto_ano_titulo}", color=COR_AZUL_ESCURO, fontweight='bold', pad=20, fontsize=18)
             
             max_val = tabela_sexo['Total'].max()
             for i, (masc, fem) in enumerate(zip(tabela_sexo['MASCULINO'], tabela_sexo['FEMININO'])):
-                if masc > 0: ax_comp.text(masc + (max_val * 0.01), i, f"{masc:,}".replace(",", "."), va='center')
-                if fem > 0: ax_comp.text(-fem - (max_val * 0.01), i, f"{fem:,}".replace(",", "."), va='center', ha='right')
-            ax_comp.legend(loc='lower right', frameon=False)
+                if masc > 0: ax_comp.text(masc + (max_val * 0.01), i, f"{masc:,}".replace(",", "."), va='center', fontsize=12)
+                if fem > 0: ax_comp.text(-fem - (max_val * 0.01), i, f"{fem:,}".replace(",", "."), va='center', ha='right', fontsize=12)
+            ax_comp.legend(loc='lower right', frameon=False, fontsize=13)
             st.pyplot(fig_comp)
             download_plot(fig_comp, "Top10_Comparativo_Sexo.png")
             
@@ -495,12 +540,12 @@ with aba_perfil:
             fig_top, ax_top = plt.subplots(figsize=(12, max(8, len(top_data) * 0.35)))
             y_coords = np.arange(len(top_data))[::-1]
             bars = ax_top.barh(y_coords, df_top_final['N_raw'], color=[COR_AZUL_ESCURO] * len(top_data), edgecolor='white')
-            ax_top.set_yticks(y_coords, labels=df_top_final["Grupo Anatômico (CID-O3)"], fontsize=9)
+            ax_top.set_yticks(y_coords, labels=df_top_final["Grupo Anatômico (CID-O3)"], fontsize=11)
             ax_top.spines['top'].set_visible(False)
             ax_top.spines['right'].set_visible(False)
-            ax_top.set_title(f"Ranking Completo de Grupos de Câncer — RHC, {texto_ano_titulo}\n(casos analíticos, {sexo_txt})", color=COR_AZUL_ESCURO, fontweight='bold', pad=15)
+            ax_top.set_title(f"Ranking Completo de Grupos de Câncer — RHC, {texto_ano_titulo}\n(casos analíticos, {sexo_txt})", color=COR_AZUL_ESCURO, fontweight='bold', pad=15, fontsize=18)
             for i, bar in enumerate(bars):
-                ax_top.text(df_top_final.iloc[i]['N_raw'] + (total_casos_perfil * 0.005), bar.get_y() + bar.get_height()/2, f"{df_top_final.iloc[i]['N_raw']:,}".replace(",", "."), va='center', ha='left', fontsize=9)
+                ax_top.text(df_top_final.iloc[i]['N_raw'] + (total_casos_perfil * 0.005), bar.get_y() + bar.get_height()/2, f"{df_top_final.iloc[i]['N_raw']:,}".replace(",", "."), va='center', ha='left', fontsize=11)
             st.pyplot(fig_top)
             download_plot(fig_top, "Ranking_Completo_CID.png")
             st.dataframe(df_top_final.drop(columns=['N_raw']), use_container_width=True)
@@ -512,11 +557,11 @@ with aba_perfil:
             
             mapa_cores_cat = {'SUS': COR_AZUL_ESCURO, 'Convênio (Saúde Suplementar)': COR_DOURADO, 'Particular': '#3a7a78', 'Não Informado': '#999999', 'Outros': '#4a4a4a'}
             fig_pizza, ax_pizza = plt.subplots(figsize=(8, 8))
-            wedges, texts, autotexts = ax_pizza.pie(cat_data.values, labels=cat_data.index, autopct='%1.1f%%', startangle=140, colors=[mapa_cores_cat.get(c, '#999999') for c in cat_data.index], explode=[0.03] * len(cat_data))
+            wedges, texts, autotexts = ax_pizza.pie(cat_data.values, labels=cat_data.index, autopct='%1.1f%%', startangle=140, colors=[mapa_cores_cat.get(c, '#999999') for c in cat_data.index], explode=[0.03] * len(cat_data), textprops={'fontsize': 14})
             for autotext in autotexts:
                 autotext.set_color('white')
                 autotext.set_weight('bold')
-            ax_pizza.set_title(f"Categoria de Atendimento — RHC, {texto_ano_titulo}\n(casos analíticos, {sexo_txt})", color=COR_AZUL_ESCURO, fontweight='bold', pad=20)
+            ax_pizza.set_title(f"Categoria de Atendimento — RHC, {texto_ano_titulo}\n(casos analíticos, {sexo_txt})", color=COR_AZUL_ESCURO, fontweight='bold', pad=20, fontsize=18)
             
             col_graf, col_tab = st.columns([1.2, 1])
             with col_graf:
@@ -525,6 +570,173 @@ with aba_perfil:
             with col_tab:
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 st.dataframe(df_cat_final, use_container_width=True)
+
+        elif visao_freq == "Base de Diagnóstico (Barras)":
+            st.markdown("### 📊 Base de Diagnóstico (Taxa de Confirmação Microscópica)")
+            
+            base_data = df_perfil['Base_Diagnostico'].value_counts().sort_values(ascending=False)
+            dados_tabela_base = []
+            
+            for cat, count in base_data.items():
+                perc = (count / total_casos_perfil) * 100
+                dados_tabela_base.append({"Base de Diagnóstico": cat, "Nº de casos": f"{count:,}".replace(",", "."), "N_raw": count, "% do total": f"{perc:.1f}%".replace(".", ",")})
+            df_base_final = pd.DataFrame(dados_tabela_base)
+            
+            fig_base, ax_base = plt.subplots(figsize=(8, 6))
+            x_coords = np.arange(len(base_data))
+            
+            cores_base = [COR_AZUL_ESCURO if cat == 'Confirmação Microscópica' else COR_DOURADO for cat in base_data.index]
+            
+            perc_values = (base_data.values / total_casos_perfil) * 100
+            bars = ax_base.bar(x_coords, perc_values, color=cores_base, edgecolor='white')
+            
+            ax_base.set_xticks(x_coords)
+            ax_base.set_xticklabels(df_base_final['Base de Diagnóstico'], fontsize=13, fontweight='bold')
+            
+            ax_base.spines['top'].set_visible(False)
+            ax_base.spines['right'].set_visible(False)
+            ax_base.spines['left'].set_visible(False)
+            ax_base.get_yaxis().set_visible(False)
+            
+            ax_base.set_title(f"Distribuição da Base de Diagnóstico — RHC, {texto_ano_titulo}\n(casos analíticos, {sexo_txt})", color=COR_AZUL_ESCURO, fontweight='bold', pad=20, fontsize=18)
+            
+            for i, bar in enumerate(bars):
+                altura = bar.get_height()
+                n_raw = df_base_final.iloc[i]['N_raw']
+                ax_base.text(bar.get_x() + bar.get_width()/2, altura + 1, f"{altura:.1f}%\n(n={n_raw:,})".replace('.', ','), va='bottom', ha='center', color='black', fontsize=13, fontweight='bold')
+            
+            ax_base.set_ylim(0, perc_values.max() + 15)
+                
+            col_graf, col_tab = st.columns([1.2, 1])
+            with col_graf:
+                st.pyplot(fig_base)
+                download_plot(fig_base, "Base_Diagnostico.png")
+            with col_tab:
+                st.markdown("<br><br>", unsafe_allow_html=True)
+                st.dataframe(df_base_final.drop(columns=['N_raw']), use_container_width=True)
+
+        elif visao_freq == "Distribuição Geográfica (Mapa)":
+            st.markdown("### 🗺️ Origem dos Pacientes (Estado de São Paulo)")
+            
+            df_sp = df_perfil[df_perfil['UFRESID'] == 'SP'].copy()
+            total_geral = len(df_perfil)
+            total_sp = len(df_sp)
+            
+            perc_sp = 0
+            total_cap = 0
+            perc_cap = 0
+            total_rmsp = 0
+            perc_rmsp = 0
+            total_int = 0
+            perc_int = 0
+            
+            if total_sp > 0:
+                df_sp['IBGE_7'] = df_sp['IBGE'].str[:7]
+                
+                perc_sp = (total_sp / total_geral) * 100
+                df_capital = df_sp[df_sp['IBGE_7'] == '3550308']
+                total_cap = len(df_capital)
+                perc_cap = (total_cap / total_sp) * 100
+                
+                df_rmsp = df_sp[df_sp['IBGE_7'].isin(IBGE_RMSP)]
+                total_rmsp = len(df_rmsp)
+                perc_rmsp = (total_rmsp / total_sp) * 100
+                
+                total_int = total_sp - total_cap - total_rmsp
+                perc_int = (total_int / total_sp) * 100
+                
+                with st.spinner("Desenhando mapa de alta resolução..."):
+                    geojson_sp = carregar_malha_sp()
+                    
+                    if geojson_sp:
+                        todos_municipios = []
+                        for feature in geojson_sp['features']:
+                            todos_municipios.append({
+                                'IBGE_7': feature['properties']['id'],
+                                'CIDADE_GEO': feature['properties']['name']
+                            })
+                        df_todos_ibge = pd.DataFrame(todos_municipios)
+                        
+                        casos_por_cidade = df_sp.groupby('IBGE_7').size().reset_index(name='Casos')
+                        
+                        mapa_data = pd.merge(df_todos_ibge, casos_por_cidade, on='IBGE_7', how='left')
+                        mapa_data['Casos'] = mapa_data['Casos'].fillna(0).astype(int)
+                        
+                        def categorizar_casos(n):
+                            if n == 0: return "Nenhum caso"
+                            elif n <= 10: return "Até 10"
+                            elif n <= 100: return "11 - 100"
+                            elif n <= 500: return "101 - 500"
+                            elif n <= 5000: return "501 - 5.000"
+                            else: return "> 5.000"
+                            
+                        mapa_data['Faixa de Casos'] = mapa_data['Casos'].apply(categorizar_casos)
+                        
+                        ordem_faixas = ["Nenhum caso", "Até 10", "11 - 100", "101 - 500", "501 - 5.000", "> 5.000"]
+                        cores_faixas = {
+                            "Nenhum caso": "#FFFFFF",
+                            "Até 10": "#C7E9C0",
+                            "11 - 100": "#74C476",
+                            "101 - 500": "#41AB5D",
+                            "501 - 5.000": "#238B45",
+                            "> 5.000": "#005A32"
+                        }
+                        
+                        fig_mapa = px.choropleth(
+                            mapa_data,
+                            geojson=geojson_sp,
+                            locations='IBGE_7',
+                            featureidkey='properties.id',
+                            color='Faixa de Casos',
+                            hover_name='CIDADE_GEO',
+                            hover_data={'Casos': True, 'Faixa de Casos': False, 'IBGE_7': False},
+                            color_discrete_map=cores_faixas,
+                            category_orders={"Faixa de Casos": ordem_faixas},
+                            scope="south america"
+                        )
+                        
+                        fig_mapa.update_traces(marker_line_width=0.5, marker_line_color='black')
+                        fig_mapa.update_geos(fitbounds="locations", visible=False)
+                        
+                        fig_mapa.update_layout(
+                            paper_bgcolor="white",
+                            plot_bgcolor="white",
+                            margin={"r":20,"t":80,"l":20,"b":20},
+                            title=dict(
+                                text=f"Distribuição Geográfica — RHC, {texto_ano_titulo}",
+                                x=0.5,
+                                y=0.95,
+                                font=dict(size=28, color=COR_AZUL_ESCURO)
+                            ),
+                            legend=dict(
+                                title=dict(text="<b>Número de casos</b>", font=dict(size=22, color="black")),
+                                yanchor="bottom",
+                                y=0.03,
+                                xanchor="left",
+                                x=0.03,
+                                bgcolor="white",
+                                bordercolor="black",
+                                borderwidth=1.5,
+                                font=dict(size=18, color="black")
+                            )
+                        )
+                        
+                        st.plotly_chart(fig_mapa, use_container_width=True)
+                        st.caption("Mapa coroplético categórico gerado a partir da malha IBGE do Estado de São Paulo.")
+                        download_plot(fig_mapa, "Mapa_SP_Origem.png")
+                        
+                        st.markdown(f"""
+                        ---
+                        ### 📝 Análise Crítica Automática para Exportação
+                        *Copie e cole o texto abaixo diretamente no seu documento Word:*
+                        
+                        > "Dos pacientes tratados na instituição no período de {anos_perfil[0]} a {anos_perfil[1]}, observou-se que a imensa maioria, **{perc_sp:.1f}% ({total_sp:,})**, era residente no Estado de São Paulo. Analisando esta coorte estadual, nota-se uma forte centralização da demanda assistencial: **{perc_cap:.1f}% ({total_cap:,})** residem no próprio município de São Paulo (Capital) e **{perc_rmsp:.1f}% ({total_rmsp:,})** nos municípios que compõem a Região Metropolitana. O fluxo de pacientes residentes no interior e litoral do Estado representa uma fatia menor, correspondendo a **{perc_int:.1f}% ({total_int:,})** dos atendimentos. Essa distribuição geográfica evidencia a consolidação da instituição como um polo de referência oncológica primariamente metropolitano."
+                        """.replace(',', 'X').replace('.', ',').replace('X', '.'))
+                        
+                    else:
+                        st.warning("⚠️ Não foi possível baixar a malha geográfica. Verifique a conexão com a internet ou firewall.")
+            else:
+                st.warning("Não há pacientes residentes em São Paulo nos filtros selecionados.")
 
 # ==========================================
 # VISÃO: SOBREVIDA 
@@ -553,6 +765,7 @@ with aba_sobrevida:
             kmf.fit(durations=df_global['Tempo_Meses'], event_observed=df_global['Status_Evento'])
             kmf.plot_survival_function(ax=ax, ci_show=True, ci_alpha=0.15, color=COR_AZUL_ESCURO, linewidth=2.5)
             configurar_eixos_grafico(ax, f"Sobrevida global (Kaplan-Meier) — RHC, {titulo_coorte}\n(exclui pele não-melanoma) (n={len(df_global):,})".replace(",", "."))
+            ax.legend(fontsize=12)
             st.pyplot(fig)
             download_plot(fig, "Sobrevida_Global.png")
             surv, low, up = extrair_metrica_60_meses(kmf)
@@ -572,7 +785,7 @@ with aba_sobrevida:
                 surv, _, _ = extrair_metrica_60_meses(kmf)
                 resultados_tabela.append({"Quinquênio": q, "Nº de casos": f"{len(df_q):,}".replace(",", "."), "Sobrevida em 5 anos": f"{surv:.1f}%".replace(".", ",")})
         configurar_eixos_grafico(ax, f"Sobrevida global por período — RHC, {titulo_coorte}\n(exclui pele não-melanoma)")
-        ax.legend(frameon=False, loc='lower left')
+        ax.legend(frameon=False, loc='lower left', fontsize=12)
         st.pyplot(fig)
         download_plot(fig, "Sobrevida_Quinquenio.png")
         if resultados_tabela: st.dataframe(pd.DataFrame(resultados_tabela), use_container_width=True)
@@ -589,7 +802,7 @@ with aba_sobrevida:
                 surv, low, up = extrair_metrica_60_meses(kmf)
                 resultados_tabela.append({"Sexo": sexo, "N_raw": len(df_s), "Nº de casos": f"{len(df_s):,}".replace(",", "."), "Sobrevida 5 anos": f"{surv:.1f}% (IC95% {low:.1f}%–{up:.1f}%)".replace(".", ",")})
         configurar_eixos_grafico(ax, f"Sobrevida global por sexo — RHC, {titulo_coorte}\n(exclui pele não-melanoma)")
-        ax.legend(frameon=False, loc='upper right')
+        ax.legend(frameon=False, loc='upper right', fontsize=12)
         st.pyplot(fig)
         download_plot(fig, "Sobrevida_Sexo.png")
         if resultados_tabela: st.dataframe(pd.DataFrame(resultados_tabela).sort_values(by="N_raw", ascending=False).drop(columns=["N_raw"]), use_container_width=True)
@@ -607,7 +820,7 @@ with aba_sobrevida:
                 surv, _, _ = extrair_metrica_60_meses(kmf)
                 resultados_tabela.append({"Estádio": est, "Nº casos": f"{len(df_est):,}".replace(",", "."), "Sobrevida": f"{surv:.1f}%".replace(".", ",")})
         configurar_eixos_grafico(ax, f"Sobrevida global por estádio — RHC, {titulo_coorte}")
-        ax.legend(frameon=False, loc='lower left')
+        ax.legend(frameon=False, loc='lower left', fontsize=12)
         st.pyplot(fig)
         download_plot(fig, "Sobrevida_Estadio.png")
         st.dataframe(pd.DataFrame(resultados_tabela), use_container_width=True)
@@ -627,16 +840,24 @@ with aba_sobrevida:
                 surv, low, up = extrair_metrica_60_meses(kmf)
                 dados_barras.append({'Grupo': grupo, 'Surv': surv, 'Err_L': surv - low, 'Err_U': up - surv})
                 dados_tabela.append({"Grupo de câncer": grupo, "N_raw": len(df_g), "Nº de casos": f"{len(df_g):,}".replace(",", "."), "Sobrevida 5 anos": f"{surv:.1f}% (IC95% {low:.1f}%–{up:.1f}%)".replace(".", ",")})
+        
         if dados_barras:
-            df_barras = pd.DataFrame(dados_barras).sort_values(by='Surv', ascending=True)
-            bars = ax.barh(np.arange(len(df_barras)), df_barras['Surv'], xerr=[df_barras['Err_L'], df_barras['Err_U']], color=[COR_DOURADO if g == 'Global (todos)' else COR_AZUL_ESCURO for g in df_barras['Grupo']], edgecolor='white', error_kw=dict(ecolor='gray', lw=1, capsize=3))
-            ax.set_yticks(np.arange(len(df_barras)), labels=df_barras['Grupo'], fontsize=12)
+            df_barras = pd.DataFrame(dados_barras)
+            
+            df_global_bar = df_barras[df_barras['Grupo'] == 'Global (todos)']
+            df_rest = df_barras[df_barras['Grupo'] != 'Global (todos)'].sort_values(by='Surv', ascending=True)
+            df_barras = pd.concat([df_rest, df_global_bar]).reset_index(drop=True)
+            
+            y_pos = np.arange(len(df_barras))
+            bars = ax.barh(y_pos, df_barras['Surv'], xerr=[df_barras['Err_L'], df_barras['Err_U']], color=[COR_DOURADO if g == 'Global (todos)' else COR_AZUL_ESCURO for g in df_barras['Grupo']], edgecolor='white', error_kw=dict(ecolor='gray', lw=1, capsize=3))
+            ax.set_yticks(y_pos, labels=df_barras['Grupo'], fontsize=13)
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            ax.set_xlabel('Sobrevida global estimada em 5 anos (%)', fontsize=11)
+            ax.set_xlabel('Sobrevida global estimada em 5 anos (%)', fontsize=13)
             ax.set_xlim(0, 105)
-            ax.set_title(f"Sobrevida global em 5 anos — RHC, {titulo_coorte}", color=COR_AZUL_ESCURO, fontweight='bold', pad=15)
-            for bar, surv in zip(bars, df_barras['Surv']): ax.text(surv + 3, bar.get_y() + bar.get_height()/2, f'{surv:.1f}%'.replace('.', ','), va='center')
+            ax.set_title(f"Sobrevida global em 5 anos — RHC, {titulo_coorte}", color=COR_AZUL_ESCURO, fontweight='bold', pad=15, fontsize=18)
+            
+            for bar, surv in zip(bars, df_barras['Surv']): ax.text(surv + 3, bar.get_y() + bar.get_height()/2, f'{surv:.1f}%'.replace('.', ','), va='center', fontsize=12)
             st.pyplot(fig)
             download_plot(fig, "Ranking_Sobrevida_5Anos.png")
             st.dataframe(pd.DataFrame(dados_tabela).sort_values(by="N_raw", ascending=False).drop(columns=["N_raw"]), use_container_width=True)
@@ -651,6 +872,7 @@ with aba_sobrevida:
             kmf.fit(durations=df_doenca['Tempo_Meses'], event_observed=df_doenca['Status_Evento'])
             kmf.plot_survival_function(ax=ax, ci_show=True, ci_alpha=0.15, color=COR_AZUL_ESCURO, linewidth=2.5)
             configurar_eixos_grafico(ax, f"{doenca_escolhida} (n={len(df_doenca):,}) — RHC, {titulo_coorte}")
+            ax.legend(fontsize=12)
             st.pyplot(fig)
             download_plot(fig, f"Sobrevida_{doenca_escolhida.replace(' ', '_')}.png")
             surv, low, up = extrair_metrica_60_meses(kmf)
