@@ -667,6 +667,14 @@ def extrair_pvalue_logrank(df_teste, col_grupo):
             return "Log-Rank: p N/A"
     return ""
 
+def achar_coluna_local(df_local, opcoes):
+    for col in df_local.columns:
+        if str(col).strip().upper() in [o.strip().upper() for o in opcoes]: return col
+    for col in df_local.columns:
+        for o in opcoes:
+            if o.strip().upper() in str(col).strip().upper(): return col
+    return df_local.columns[0]
+
 # Abas Superiores
 aba_auditoria, aba_perfil, aba_sobrevida, aba_jornada = st.tabs(["🛡️ Auditoria Data Quality", "👥 Perfil Demográfico", "📈 Análise de Sobrevida", "⏱️ Jornada Assistencial"])
 
@@ -720,7 +728,7 @@ with aba_perfil:
         anos_perfil = st.slider("Recorte Temporal:", min_value=ano_min_df, max_value=ano_max_df, value=(ano_min_df, ano_max_df))
     with col_f2:
         st.markdown("<br>", unsafe_allow_html=True)
-        visao_freq = st.selectbox("Eixo de Análise Visual:", ["Evolução Histórica (Casos por Ano)", "Evolução por Ano e Sexo (Linhas)", "Distribuição por Faixa Etária (Barras)", "Top 10 Grupos Principais", "Top 10 Comparativo (Homens vs Mulheres)", "Todas as Neoplasias (Grupos Anatômicos)", "Categoria de Atendimento (Pizza)", "Base de Diagnóstico (Pizza)", "Perfil de Tratamento (Barras)", "Distribuição Geográfica (Rosca)", "Distribuição Geográfica (Mapa)"], label_visibility="collapsed")
+        visao_freq = st.selectbox("Eixo de Análise Visual:", ["Evolução Histórica (Casos por Ano)", "Evolução por Ano e Sexo (Linhas)", "Distribuição por Faixa Etária (Linhas)", "Top 10 Grupos Principais", "Top 10 Comparativo (Homens vs Mulheres)", "Todas as Neoplasias (Grupos Anatômicos)", "Categoria de Atendimento (Pizza)", "Base de Diagnóstico (Pizza)", "Perfil de Tratamento (Barras)", "Distribuição Geográfica (Rosca)", "Distribuição Geográfica (Mapa)"], label_visibility="collapsed")
     
     df_perfil = df_filtrado[(df_filtrado['Ano_Diag'] >= anos_perfil[0]) & (df_filtrado['Ano_Diag'] <= anos_perfil[1])]
     df_base_ano = df_base[(df_base['Ano_Diag'] >= anos_perfil[0]) & (df_base['Ano_Diag'] <= anos_perfil[1])].copy()
@@ -893,7 +901,7 @@ with aba_perfil:
             with st.expander("📂 Inspecionar Dataframe Bruto"):
                 st.dataframe(df_tendencia_display, use_container_width=True, hide_index=True)
 
-        elif visao_freq == "Distribuição por Faixa Etária (Barras)":
+        elif visao_freq == "Distribuição por Faixa Etária (Linhas)":
             st.markdown("## Distribuição dos casos por faixa etária e sexo")
             
             titulo_grafico = st.text_input("✏️ Customizar título do gráfico:", value=f"Distribuição dos casos por faixa etária e sexo — RHC, {texto_ano_titulo}", key="title_idade_sexo")
@@ -910,8 +918,8 @@ with aba_perfil:
             idade_media = df_idade['Idade Numérica'].mean()
             idade_mediana = df_idade['Idade Numérica'].median()
             
-            bins = [-1, 9, 19, 29, 39, 49, 59, 69, 150]
-            labels = ['0-9', '10-19', '20-29', '30-39', '40-49', '50-59', '60-69', '70+']
+            bins = [-1, 4, 9, 14, 19, 24, 29, 34, 39, 44, 49, 54, 59, 64, 69, 74, 79, 84, 150]
+            labels = ['0-4', '5-9', '10-14', '15-19', '20-24', '25-29', '30-34', '35-39', '40-44', '45-49', '50-54', '55-59', '60-64', '65-69', '70-74', '75-79', '80-84', '85+']
             df_idade['Faixa_Etaria'] = pd.cut(df_idade['Idade Numérica'], bins=bins, labels=labels)
             
             tabela_idade_sexo = pd.crosstab(df_idade['Faixa_Etaria'], df_idade['Sexo']).reindex(labels).fillna(0)
@@ -923,50 +931,71 @@ with aba_perfil:
             > 📝 **Draft de Documentação:** Do total filtrado, **{tot_fem:,} ({perc_fem:.1f}%)** ocorreram em mulheres e **{tot_masc:,} ({perc_masc:.1f}%)** em homens. A idade média ao diagnóstico foi de **{idade_media:.2f} anos** (mediana de {idade_mediana:.0f} anos), com maior concentração de casos na faixa etária de **{faixa_max} anos**, compatível com o padrão etário esperado para os principais tipos de câncer atendidos na instituição.
             """.replace(',', 'X').replace('.', ',').replace('X', '.'))
             
-            fig_idade, ax_idade = plt.subplots(figsize=(12, 8))
-            y_coords = np.arange(len(labels))
-            altura_barra = 0.4
+            fig_idade, ax_idade = plt.subplots(figsize=(14, 8))
+            x_coords = np.arange(len(labels))
             
-            val_fem = tabela_idade_sexo['FEMININO'] if 'FEMININO' in tabela_idade_sexo.columns else np.zeros(len(labels))
-            val_masc = tabela_idade_sexo['MASCULINO'] if 'MASCULINO' in tabela_idade_sexo.columns else np.zeros(len(labels))
+            val_fem = tabela_idade_sexo['FEMININO'].values if 'FEMININO' in tabela_idade_sexo.columns else np.zeros(len(labels))
+            val_masc = tabela_idade_sexo['MASCULINO'].values if 'MASCULINO' in tabela_idade_sexo.columns else np.zeros(len(labels))
             
-            bars_fem = ax_idade.barh(y_coords - altura_barra/2, val_fem, height=altura_barra, color=CORES_SEXO['FEMININO'], label='Feminino', edgecolor='white')
-            bars_masc = ax_idade.barh(y_coords + altura_barra/2, val_masc, height=altura_barra, color=CORES_SEXO['MASCULINO'], label='Masculino', edgecolor='white')
+            if tot_masc > 0:
+                ax_idade.plot(x_coords, val_masc, color=CORES_SEXO['MASCULINO'], linewidth=3, label='Masculino')
+            if tot_fem > 0:
+                ax_idade.plot(x_coords, val_fem, color=CORES_SEXO['FEMININO'], linewidth=3, label='Feminino')
             
-            ax_idade.set_yticks(y_coords)
-            ax_idade.set_yticklabels(labels, fontsize=14, color='#555555')
+            ax_idade.set_xticks(x_coords)
+            ax_idade.set_xticklabels(labels, rotation=45, ha='right', fontsize=12, color='#555555')
             ax_idade.spines['top'].set_visible(False)
             ax_idade.spines['right'].set_visible(False)
-            ax_idade.spines['left'].set_color('#cccccc')
+            ax_idade.spines['left'].set_visible(False)
             ax_idade.spines['bottom'].set_color('#cccccc')
-            ax_idade.set_xlabel('Número de casos', fontsize=14, color='#333333')
-            ax_idade.set_ylabel('Faixa etária (anos)', fontsize=14, color='#333333')
-            ax_idade.tick_params(axis='x', labelsize=12, colors='#555555')
-            ax_idade.legend(frameon=False, fontsize=13)
-            ax_idade.set_title(titulo_grafico, color=COR_AZUL_ESCURO, fontweight='bold', pad=20, fontsize=18)
+            ax_idade.yaxis.grid(True, linestyle='-', alpha=0.5, color='#dddddd')
+            ax_idade.set_axisbelow(True)
             
-            for bar in bars_fem:
-                width = bar.get_width()
-                if width > 0:
-                    ax_idade.text(width + (total_idade * 0.005), bar.get_y() + bar.get_height()/2, f"{int(width):,}".replace(',', '.'), va='center', fontsize=11, color='#333333')
-                    
-            for bar in bars_masc:
-                width = bar.get_width()
-                if width > 0:
-                    ax_idade.text(width + (total_idade * 0.005), bar.get_y() + bar.get_height()/2, f"{int(width):,}".replace(',', '.'), va='center', fontsize=11, color='#333333')
+            ax_idade.set_xlabel('Faixa etária', fontsize=14, color='#333333', labelpad=15)
+            ax_idade.set_ylabel('Número de casos novos', fontsize=14, color='#333333', labelpad=15)
+            ax_idade.tick_params(axis='y', length=0, labelsize=12, colors='#555555')
+            ax_idade.tick_params(axis='x', labelsize=12, colors='#555555')
+            
+            # Linhas Verticais Divisórias
+            v_lines = [3.5, 7.5, 11.5]
+            for v in v_lines:
+                ax_idade.axvline(x=v, color='#333333', linestyle=':', linewidth=1, alpha=0.5)
+            
+            # Cálculo de Percentuais por Fase da Vida
+            def calc_stage_pct(start_idx, end_idx):
+                m = val_masc[start_idx:end_idx+1].sum() / tot_masc * 100 if tot_masc > 0 else 0
+                f = val_fem[start_idx:end_idx+1].sum() / tot_fem * 100 if tot_fem > 0 else 0
+                return m, f
+                
+            m1, f1 = calc_stage_pct(0, 3) # Crianças/Adolescentes (0-19)
+            m2, f2 = calc_stage_pct(4, 7) # Adultos jovens (20-39)
+            m3, f3 = calc_stage_pct(8, 11) # Adultos (40-59)
+            m4, f4 = calc_stage_pct(12, 17) # Idosos (60+)
+            
+            max_y = max(val_fem.max() if tot_fem > 0 else 0, val_masc.max() if tot_masc > 0 else 0)
+            y_text = max_y * 1.15
+            ax_idade.set_ylim(0, max_y * 1.3)
+            
+            ax_idade.text(1.5, y_text, f"Crianças e adolescentes\n{m1:.0f}% (M) | {f1:.0f}% (F)", ha='center', va='center', fontsize=11, color='#333333')
+            ax_idade.text(5.5, y_text, f"Adultos jovens\n{m2:.0f}% (M) | {f2:.0f}% (F)", ha='center', va='center', fontsize=11, color='#333333')
+            ax_idade.text(9.5, y_text, f"Adultos\n{m3:.0f}% (M) | {f3:.0f}% (F)", ha='center', va='center', fontsize=11, color='#333333')
+            ax_idade.text(14.5, y_text, f"Idosos\n{m4:.0f}% (M) | {f4:.0f}% (F)", ha='center', va='center', fontsize=11, color='#333333')
+            
+            # Legenda centralizada embaixo
+            ax_idade.legend(frameon=False, fontsize=13, loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=2)
+            
+            ax_idade.set_title(titulo_grafico, color=COR_AZUL_ESCURO, fontweight='bold', pad=30, fontsize=18)
+            plt.subplots_adjust(bottom=0.25)
             
             st.pyplot(fig_idade)
             
             col_d1, col_d2 = st.columns([1, 3])
-            with col_d1: download_plot(fig_idade, "Faixa_Etaria_Sexo.png")
-            
-            val_fem_tab = tabela_idade_sexo['FEMININO'].values if 'FEMININO' in tabela_idade_sexo.columns else np.zeros(len(labels))
-            val_masc_tab = tabela_idade_sexo['MASCULINO'].values if 'MASCULINO' in tabela_idade_sexo.columns else np.zeros(len(labels))
+            with col_d1: download_plot(fig_idade, "Faixa_Etaria_Sexo_Linhas.png")
             
             df_tabela_idade = pd.DataFrame({
                 'Faixa Etária': labels,
-                'FEMININO': val_fem_tab,
-                'MASCULINO': val_masc_tab
+                'FEMININO': val_fem,
+                'MASCULINO': val_masc
             })
             
             df_tabela_idade['Total'] = df_tabela_idade['FEMININO'] + df_tabela_idade['MASCULINO']
@@ -1671,13 +1700,19 @@ with aba_sobrevida:
         anos_sobrevida = st.slider("Coorte de Sobrevida (Diagnóstico):", min_value=ano_min_df, max_value=ano_max_df, value=(ano_min_df, sugestao_max_sobrevida))
     with col_s2:
         st.markdown("<br>", unsafe_allow_html=True)
-        tipo_grafico = st.selectbox("Eixo de Análise Visual:", ["Sobrevida Global (Todas as Neoplasias)", "Sobrevida por Doença Específica", "Ranking de Sobrevida (5 Anos)"], label_visibility="collapsed")
+        tipo_grafico = st.selectbox("Eixo de Análise Visual:", ["Sobrevida Global (Todas as Neoplasias)", "Sobrevida por Doença Específica", "Ranking de Sobrevida (5 Anos)", "Quadro Metodológico (CIDs e Morfologias)"], label_visibility="collapsed")
     
-    st.info(f"💡 **Recomendação Metodológica:** Para avaliar sobrevivência em 5 anos com confiabilidade, o limite aconselhável de acompanhamento é **{sugestao_max_sobrevida}**.")
+    st.info(f"💡 **Recomendação Metodológica:** Para avaliar sobrevivência em 5 anos com confiabilidade, o limite aconselhável de acompanhamento é **{sugestao_max_sobrevida}**. Casos *in situ* (Estadio 0) e Câncer de Pele Não-Melanoma são automaticamente excluídos destas coortes de sobrevida.")
     st.markdown("<hr>", unsafe_allow_html=True)
     
     df_sobrevida_base = df_filtrado[(df_filtrado['Ano_Diag'] >= anos_sobrevida[0]) & (df_filtrado['Ano_Diag'] <= anos_sobrevida[1])].copy()
-    df_global = df_sobrevida_base[df_sobrevida_base['Macro_Topografia'] != 'Pele - não-melanoma'].copy()
+    
+    # Aplicando a regra Ouro de Sobrevida: Excluir Pele Não-Melanoma e In Situ
+    df_global = df_sobrevida_base[
+        (df_sobrevida_base['Macro_Topografia'] != 'Pele - não-melanoma') & 
+        (df_sobrevida_base['Estadio_Clinico'] != '0 (in situ)')
+    ].copy()
+    
     titulo_coorte = f"coorte {anos_sobrevida[0]}–{anos_sobrevida[1]}"
     
     str_sexo_base = f", sexo {filtro_sexo.capitalize()}" if filtro_sexo != 'Ambos' else ", ambos os sexos"
@@ -1735,8 +1770,8 @@ with aba_sobrevida:
                 ax.legend(frameon=False, loc='upper right', fontsize=12)
             
             elif comparacao_global == "Estadio Clínico":
-                grupos = ['0 (in situ)', 'I', 'II', 'III', 'IV']
-                cores_est = {'0 (in situ)': '#3a7a78', 'I': COR_AZUL_ESCURO, 'II': COR_DOURADO, 'III': '#7b2e3a', 'IV': '#4a4a4a'}
+                grupos = ['I', 'II', 'III', 'IV']
+                cores_est = {'I': COR_AZUL_ESCURO, 'II': COR_DOURADO, 'III': '#7b2e3a', 'IV': '#4a4a4a'}
                 for grp in grupos:
                     df_g = df_global[df_global['Estadio_Clinico'] == grp]
                     if len(df_g) > 5:
@@ -1785,7 +1820,7 @@ with aba_sobrevida:
             if comparacao_global != "Sem divisão (Curva Única)":
                 desc_comp = f", comparada por **{comparacao_global}**"
                 
-            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para **todas as topografias** (C00-C80){str_filtros}{desc_comp}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
+            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para **todas as topografias invasivas** (C00-C80, exceto pele não-melanoma){str_filtros}{desc_comp}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
             
             if resultados_tabela:
                 df_res = pd.DataFrame(resultados_tabela)
@@ -1909,7 +1944,7 @@ with aba_sobrevida:
             col_d1, col_d2 = st.columns([1, 3])
             with col_d1: download_plot(fig, "Ranking_Sobrevida_5Anos.png")
             
-            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para as **10 Neoplasias Mais Frequentes**{str_filtros}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
+            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para as **10 Neoplasias Mais Frequentes** (casos invasivos){str_filtros}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
             
             if dados_tabela:
                 df_res = pd.DataFrame(dados_tabela).sort_values(by="N_raw", ascending=False).drop(columns=["N_raw"])
@@ -1931,7 +1966,7 @@ with aba_sobrevida:
         with col_sel2:
             comparacao_doenca = st.selectbox("Comparar por:", ["Quinquênio de Diagnóstico", "Estadio Clínico", "Sexo", "Sem divisão (Curva Única)"])
             
-        df_doenca = df_sobrevida_base[df_sobrevida_base['Macro_Topografia'] == doenca_escolhida]
+        df_doenca = df_global[df_global['Macro_Topografia'] == doenca_escolhida]
         total_doenca = len(df_doenca)
         
         titulo_default = f"Sobrevida: {doenca_escolhida}"
@@ -1981,8 +2016,8 @@ with aba_sobrevida:
                 ax.legend(frameon=False, loc='upper right', fontsize=12)
             
             elif comparacao_doenca == "Estadio Clínico":
-                grupos = ['0 (in situ)', 'I', 'II', 'III', 'IV']
-                cores_est = {'0 (in situ)': '#3a7a78', 'I': COR_AZUL_ESCURO, 'II': COR_DOURADO, 'III': '#7b2e3a', 'IV': '#4a4a4a'}
+                grupos = ['I', 'II', 'III', 'IV']
+                cores_est = {'I': COR_AZUL_ESCURO, 'II': COR_DOURADO, 'III': '#7b2e3a', 'IV': '#4a4a4a'}
                 for grp in grupos:
                     df_g = df_doenca[df_doenca['Estadio_Clinico'] == grp]
                     if len(df_g) > 5:
@@ -2032,7 +2067,7 @@ with aba_sobrevida:
             if comparacao_doenca != "Sem divisão (Curva Única)":
                 desc_comp = f", comparada por **{comparacao_doenca}**"
                 
-            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para neoplasias de **{doenca_escolhida}** ({cid_str}){str_filtros}{desc_comp}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
+            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para neoplasias invasivas de **{doenca_escolhida}** ({cid_str}){str_filtros}{desc_comp}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
             
             if resultados_tabela:
                 df_res = pd.DataFrame(resultados_tabela)
@@ -2102,6 +2137,107 @@ with aba_sobrevida:
                     })
                     
                     st.dataframe(pd.DataFrame(dados_tabela_q_s), use_container_width=True, hide_index=True)
+
+    elif tipo_grafico == "Quadro Metodológico (CIDs e Morfologias)":
+        st.markdown("## Quadro Metodológico: Classificação, Topografia e Morfologia")
+        
+        st.markdown(f"""
+        > 📝 **Draft de Documentação:** Quadro resumo das categorias de câncer incluídas na análise de sobrevida, detalhando a classificação histológica (CID-10), os códigos de topografia e morfologia (CID-O3), a distribuição por sexo e o volume total de casos (coorte {anos_sobrevida[0]}–{anos_sobrevida[1]}). Foram excluídos os casos *in situ* e as neoplasias de pele não-melanoma.
+        """)
+        
+        DIC_CID10_HISTO = {
+            'Mama': 'Carcinoma ductal invasivo de mama (C50)',
+            'Tireoide': 'Carcinoma papilífero de tireoide (C73)',
+            'Próstata': 'Adenocarcinomas de próstata (C61)',
+            'Colo do útero': 'Carcinomas de células escamosas de colo do útero (C53)',
+            'Vulva': 'Carcinoma escamoso de vulva (C51)',
+            'Corpo do útero': 'Adenocarcinoma endometrióide de corpo de útero (C54-C55)',
+            'Ovário': 'Tumores malignos de ovário (C56)',
+            'Cólon e reto': 'Adenocarcinomas de cólon e reto (C18-C20)',
+            'Cavidade oral e orofaringe': 'Carcinomas de células escamosas de cavidade oral e orofaringe (C00-C10)',
+            'Pele - melanoma': 'Melanoma de pele (C43)',
+            'Pele - não-melanoma': 'Câncer de pele não-melanoma (C44)'
+        }
+        
+        col_topo_local = achar_coluna_local(df_global, ['TOPO', 'CÓDIGO DA TOPOGRAFIA', 'CODIGO DA TOPOGRAFIA'])
+        col_morfo_local = achar_coluna_local(df_global, ['MORFO', 'MORFOLOGIA', 'CÓDIGO DA MORFOLOGIA', 'DESCMORFO', 'DESCRIÇÃO DA MORFOLOGIA'])
+        
+        quadro_dados = []
+        grupos_ordenados = df_global['Macro_Topografia'].value_counts().index
+        
+        for grupo in grupos_ordenados:
+            if grupo == 'Outros' or pd.isna(grupo): continue
+            
+            df_g = df_global[df_global['Macro_Topografia'] == grupo]
+            n_casos = len(df_g)
+            
+            tipo_hist = DIC_CID10_HISTO.get(grupo, f"Neoplasia maligna ({grupo})")
+            
+            topos = df_g[col_topo_local].dropna().astype(str).str.upper().str.strip()
+            topos_clean = sorted(list(set([t for t in topos if t not in ['NAN', 'NONE', '']])))
+            topos_str = ", ".join(topos_clean)
+            
+            morfos_brutos = df_g[col_morfo_local].dropna().astype(str)
+            morfos_extraidos = morfos_brutos.str.extract(r'(\d{4,5})')[0].dropna()
+            
+            if len(morfos_extraidos) > 0:
+                morfos_clean = sorted(list(set(morfos_extraidos)))
+            else:
+                morfos_clean = sorted(list(set([m.strip() for m in morfos_brutos if m.strip() not in ['nan', 'none', '']])))
+                
+            morfos_str = ", ".join(morfos_clean)
+            
+            sexos = df_g['Sexo'].dropna().unique()
+            sexos_clean = sorted(list(set([s.capitalize() for s in sexos])))
+            sexo_str = " / ".join(sexos_clean)
+            
+            quadro_dados.append({
+                "Tipo Histológico (CID-10)": tipo_hist,
+                "Topografia (CID-O3)": topos_str,
+                "Morfologia (CID-O3)": morfos_str,
+                "Sexo": sexo_str,
+                "Nº de Casos": n_casos
+            })
+            
+        casos_outros = len(df_global[df_global['Macro_Topografia'] == 'Outros'])
+        if casos_outros > 0:
+            df_outros = df_global[df_global['Macro_Topografia'] == 'Outros']
+            sexos_outros = df_outros['Sexo'].dropna().unique()
+            sexos_outros_clean = sorted(list(set([s.capitalize() for s in sexos_outros])))
+            sexo_outros_str = " / ".join(sexos_outros_clean)
+            
+            quadro_dados.append({
+                "Tipo Histológico (CID-10)": "Outras Neoplasias Malignas",
+                "Topografia (CID-O3)": "Diversas",
+                "Morfologia (CID-O3)": "Diversas",
+                "Sexo": sexo_outros_str,
+                "Nº de Casos": casos_outros
+            })
+            
+        df_quadro = pd.DataFrame(quadro_dados)
+        
+        total_geral = df_quadro['Nº de Casos'].sum()
+        linha_total = pd.DataFrame([{
+            "Tipo Histológico (CID-10)": "TOTAL DA COORTE DE SOBREVIDA",
+            "Topografia (CID-O3)": "-",
+            "Morfologia (CID-O3)": "-",
+            "Sexo": "-",
+            "Nº de Casos": total_geral
+        }])
+        df_quadro = pd.concat([df_quadro, linha_total], ignore_index=True)
+        
+        df_quadro['Nº de Casos'] = df_quadro['Nº de Casos'].apply(lambda x: f"{x:,}".replace(',', '.'))
+        
+        st.table(df_quadro)
+        
+        csv_quadro = df_quadro.to_csv(index=False, sep=';', encoding='utf-8-sig')
+        st.download_button(
+            label="📥 Baixar Quadro em CSV (Para colar no Excel/Word)",
+            data=csv_quadro,
+            file_name="Quadro_Metodologico_CID.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
 
 # ==========================================
 # VISÃO: JORNADA DO PACIENTE
