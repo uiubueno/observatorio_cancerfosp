@@ -347,6 +347,8 @@ def carregar_dados(arquivo):
     col_ibge = achar_coluna(['IBGE', 'CÓDIGO IBGE'])
     col_cidade = achar_coluna(['CIDADE', 'MUNICÍPIO DE RESIDÊNCIA', 'MUNICIPIO'])
     col_diagprev = achar_coluna(['DIAGPREV', 'DIAGNÓSTICO PRÉVIO', 'DIAGNOSTICO PREVIO', 'TRATAMENTO ANTERIOR'])
+    col_ufnasc = achar_coluna(['UFNASC', 'UF DE NASCIMENTO', 'NATURALIDADE'])
+    col_escolari = achar_coluna(['ESCOLARI', 'ESCOLARIDADE'])
     
     if col_diag not in df.columns:
         raise ValueError(f"O painel não achou a coluna '{col_diag}'. Verifique se o Excel possui cabeçalhos formatados.")
@@ -355,6 +357,33 @@ def carregar_dados(arquivo):
     df[col_fim] = pd.to_datetime(df[col_fim], errors='coerce')
     df[col_cons] = pd.to_datetime(df[col_cons], errors='coerce')
     df[col_trat] = pd.to_datetime(df[col_trat], errors='coerce')
+    
+    # Processamento Extra: Escolaridade
+    if col_escolari in df.columns:
+        df['Escolaridade'] = df[col_escolari].astype(str).str.upper().str.strip()
+        df['Escolaridade'] = df['Escolaridade'].replace({
+            'NAN': 'IGNORADA', 'NONE': 'IGNORADA', '': 'IGNORADA', 
+            'NÃO INFORMADO': 'IGNORADA', 'NAO INFORMADO': 'IGNORADA'
+        })
+        mapa_esc_num = {'1': 'ANALFABETO', '2': 'ENS. FUNDAMENTAL INCOMPLETO', '3': 'ENS. FUNDAMENTAL COMPLETO', '4': 'ENSINO MÉDIO', '5': 'SUPERIOR', '9': 'IGNORADA', '1.0': 'ANALFABETO', '2.0': 'ENS. FUNDAMENTAL INCOMPLETO', '3.0': 'ENS. FUNDAMENTAL COMPLETO', '4.0': 'ENSINO MÉDIO', '5.0': 'SUPERIOR', '9.0': 'IGNORADA'}
+        df['Escolaridade'] = df['Escolaridade'].map(lambda x: mapa_esc_num.get(x, x))
+    else:
+        df['Escolaridade'] = 'IGNORADA'
+        
+    # Processamento Extra: Naturalidade
+    if col_ufnasc in df.columns:
+        df['UFNASC_raw'] = df[col_ufnasc].astype(str).str.upper().str.strip()
+    else:
+        df['UFNASC_raw'] = '99'
+        
+    valid_ufs = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO']
+    
+    def classificar_naturalidade(uf):
+        if uf in valid_ufs: return 'Brasileiros'
+        elif uf in ['99', 'NAN', 'NONE', '', '99.0']: return 'Não Informado'
+        else: return 'Estrangeiros'
+        
+    df['Naturalidade'] = df['UFNASC_raw'].apply(classificar_naturalidade)
     
     # Processamento Extra: Combinações de Tratamento
     col_trathosp_candidates = [c for c in df.columns if str(c).strip().upper() in ['TRATHOSP', 'TRATAMENTO', 'COMBINAÇÃO DE TRATAMENTO', 'COMBINACAO DE TRATAMENTO']]
@@ -728,7 +757,7 @@ with aba_perfil:
         anos_perfil = st.slider("Recorte Temporal:", min_value=ano_min_df, max_value=ano_max_df, value=(ano_min_df, ano_max_df))
     with col_f2:
         st.markdown("<br>", unsafe_allow_html=True)
-        visao_freq = st.selectbox("Eixo de Análise Visual:", ["Evolução Histórica (Casos por Ano)", "Evolução por Ano e Sexo (Linhas)", "Distribuição por Faixa Etária (Linhas)", "Top 10 Grupos Principais", "Top 10 Comparativo (Homens vs Mulheres)", "Todas as Neoplasias (Grupos Anatômicos)", "Categoria de Atendimento (Pizza)", "Base de Diagnóstico (Pizza)", "Perfil de Tratamento (Barras)", "Distribuição Geográfica (Rosca)", "Distribuição Geográfica (Mapa)"], label_visibility="collapsed")
+        visao_freq = st.selectbox("Eixo de Análise Visual:", ["Evolução Histórica (Casos por Ano)", "Evolução por Ano e Sexo (Linhas)", "Distribuição por Faixa Etária (Linhas)", "Top 10 Grupos Principais", "Top 10 Comparativo (Homens vs Mulheres)", "Todas as Neoplasias (Grupos Anatômicos)", "Categoria de Atendimento (Pizza)", "Base de Diagnóstico (Pizza)", "Perfil de Tratamento (Barras)", "Escolaridade (Barras)", "Escolaridade vs Estadio Clínico", "Naturalidade (Brasil vs Estrangeiros) (Pizza)", "Distribuição Geográfica (Rosca)", "Distribuição Geográfica (Mapa)"], label_visibility="collapsed")
     
     df_perfil = df_filtrado[(df_filtrado['Ano_Diag'] >= anos_perfil[0]) & (df_filtrado['Ano_Diag'] <= anos_perfil[1])]
     df_base_ano = df_base[(df_base['Ano_Diag'] >= anos_perfil[0]) & (df_base['Ano_Diag'] <= anos_perfil[1])].copy()
@@ -992,10 +1021,13 @@ with aba_perfil:
             col_d1, col_d2 = st.columns([1, 3])
             with col_d1: download_plot(fig_idade, "Faixa_Etaria_Sexo_Linhas.png")
             
+            val_fem_tab = tabela_idade_sexo['FEMININO'].values if 'FEMININO' in tabela_idade_sexo.columns else np.zeros(len(labels))
+            val_masc_tab = tabela_idade_sexo['MASCULINO'].values if 'MASCULINO' in tabela_idade_sexo.columns else np.zeros(len(labels))
+            
             df_tabela_idade = pd.DataFrame({
                 'Faixa Etária': labels,
-                'FEMININO': val_fem,
-                'MASCULINO': val_masc
+                'FEMININO': val_fem_tab,
+                'MASCULINO': val_masc_tab
             })
             
             df_tabela_idade['Total'] = df_tabela_idade['FEMININO'] + df_tabela_idade['MASCULINO']
@@ -1012,6 +1044,179 @@ with aba_perfil:
             
             with st.expander("📂 Inspecionar Dataframe Bruto"):
                 st.dataframe(df_tabela_idade, use_container_width=True, hide_index=True)
+
+        elif visao_freq == "Escolaridade (Barras)":
+            st.markdown("## Distribuição por Nível de Escolaridade")
+            
+            titulo_grafico = st.text_input("✏️ Customizar título do gráfico:", value=f"Distribuição da escolaridade no momento do diagnóstico — RHC, {texto_ano_titulo}", key="title_escolaridade")
+            
+            ordem_esc = ['ANALFABETO', 'ENS. FUNDAMENTAL INCOMPLETO', 'ENS. FUNDAMENTAL COMPLETO', 'ENSINO MÉDIO', 'SUPERIOR', 'IGNORADA']
+            
+            esc_data = df_perfil['Escolaridade'].value_counts()
+            
+            # Garantir que todas as categorias da ordem existam, mesmo com zero, para não quebrar o gráfico
+            for cat in ordem_esc:
+                if cat not in esc_data:
+                    esc_data[cat] = 0
+                    
+            # Reordenar mantendo a lógica de progressão educacional
+            esc_data = esc_data.reindex(ordem_esc)
+            
+            df_grafico = pd.DataFrame({
+                "Escolaridade": esc_data.index,
+                "N_raw": esc_data.values
+            })
+            
+            # Inverter para o gráfico de barras horizontais (o primeiro da lista fica no topo)
+            df_grafico = df_grafico.iloc[::-1]
+            
+            fig_esc, ax_esc = plt.subplots(figsize=(12, 7))
+            y_coords = np.arange(len(df_grafico))
+            
+            cores_barras = [cor_primaria if cat != 'IGNORADA' else '#999999' for cat in df_grafico["Escolaridade"]]
+                
+            bars = ax_esc.barh(y_coords, df_grafico['N_raw'], color=cores_barras, edgecolor='white')
+            ax_esc.set_yticks(y_coords)
+            ax_esc.set_yticklabels(df_grafico["Escolaridade"], fontsize=13, color='#555555')
+            
+            ax_esc.spines['top'].set_visible(False)
+            ax_esc.spines['right'].set_visible(False)
+            ax_esc.spines['left'].set_color('#cccccc')
+            ax_esc.spines['bottom'].set_color('#cccccc')
+            ax_esc.set_xlabel('Número de casos', fontsize=14, color='#333333')
+            ax_esc.tick_params(axis='x', labelsize=12, colors='#555555')
+            ax_esc.set_title(titulo_grafico, color=COR_AZUL_ESCURO, fontweight='bold', pad=15, fontsize=18)
+            
+            for i, bar in enumerate(bars):
+                val = df_grafico.iloc[i]['N_raw']
+                ax_esc.text(val + (total_casos_perfil * 0.005), bar.get_y() + bar.get_height()/2, f"{val:,}".replace(",", "."), va='center', ha='left', color='#333333', fontsize=12)
+                
+            st.pyplot(fig_esc)
+            
+            col_d1, col_d2 = st.columns([1, 3])
+            with col_d1: download_plot(fig_esc, "Escolaridade_Barras.png")
+            
+            # Tabela Matemática
+            dados_tabela_esc = []
+            
+            for esc in ordem_esc:
+                count = esc_data[esc]
+                pct = (count / total_casos_perfil) * 100 if total_casos_perfil > 0 else 0
+                dados_tabela_esc.append({
+                    "Nível de Escolaridade": esc,
+                    "Nº de casos": f"{count:,}".replace(",", "."),
+                    "% do total": f"{pct:.1f}%".replace(".", ",")
+                })
+                
+            dados_tabela_esc.append({
+                "Nível de Escolaridade": "TOTAL (100% da Base)",
+                "Nº de casos": f"{total_casos_perfil:,}".replace(",", "."),
+                "% do total": "100,0%"
+            })
+            
+            df_tab_esc = pd.DataFrame(dados_tabela_esc)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.dataframe(df_tab_esc, use_container_width=True, hide_index=True)
+            
+            st.markdown(f"""
+            > 📝 **Draft de Documentação:** A análise do perfil educacional da coorte evidencia a distribuição da instrução formal dos pacientes atendidos na instituição. Os dados refletem as condições socioeconômicas da população adscrita e são fundamentais para o planejamento das abordagens de comunicação e letramento em saúde durante o fluxo assistencial.
+            """)
+
+        elif visao_freq == "Escolaridade vs Estadio Clínico":
+            st.markdown("## Impacto da Escolaridade no Estadiamento Clínico (100%)")
+            
+            titulo_grafico = st.text_input("✏️ Customizar título do gráfico:", value=f"Distribuição do Estadio Clínico por Nível de Escolaridade — RHC, {texto_ano_titulo}", key="title_esc_est")
+            
+            ordem_esc = ['ANALFABETO', 'ENS. FUNDAMENTAL INCOMPLETO', 'ENS. FUNDAMENTAL COMPLETO', 'ENSINO MÉDIO', 'SUPERIOR', 'IGNORADA']
+            ordem_est = ['0 (in situ)', 'I', 'II', 'III', 'IV', 'Outros']
+            
+            cores_estadio = {
+                '0 (in situ)': '#3a7a78',
+                'I': COR_AZUL_ESCURO,
+                'II': COR_DOURADO,
+                'III': '#7b2e3a',
+                'IV': '#4a4a4a',
+                'Outros': '#999999'
+            }
+            
+            df_esc_est = df_perfil.copy()
+            
+            # Garantir que todos os estadios existam na matriz, mesmo que vazios
+            tabela_cruzada = pd.crosstab(df_esc_est['Escolaridade'], df_esc_est['Estadio_Clinico'])
+            
+            for esc in ordem_esc:
+                if esc not in tabela_cruzada.index:
+                    tabela_cruzada.loc[esc] = 0
+            for est in ordem_est:
+                if est not in tabela_cruzada.columns:
+                    tabela_cruzada[est] = 0
+                    
+            tabela_cruzada = tabela_cruzada.reindex(index=ordem_esc, columns=ordem_est).fillna(0)
+            tabela_pct = tabela_cruzada.div(tabela_cruzada.sum(axis=1), axis=0).fillna(0) * 100
+            
+            fig_esc_est, ax_esc_est = plt.subplots(figsize=(14, 8))
+            
+            # Inverter a ordem para o gráfico (Analfabeto no topo)
+            y_coords = np.arange(len(ordem_esc))[::-1]
+            bottom = np.zeros(len(ordem_esc))
+            
+            for est in ordem_est:
+                valores_pct = tabela_pct[est].values
+                bars = ax_esc_est.barh(y_coords, valores_pct, left=bottom, color=cores_estadio[est], edgecolor='white', height=0.6, label=f"Estadio {est}")
+                
+                # Injetar os números dentro das barras se a fatia for maior que 5%
+                for i, bar in enumerate(bars):
+                    if valores_pct[i] > 5:
+                        ax_esc_est.text(bar.get_x() + bar.get_width()/2, bar.get_y() + bar.get_height()/2, f"{valores_pct[i]:.1f}%".replace('.', ','), ha='center', va='center', color='white', fontsize=11, fontweight='bold')
+                
+                bottom += valores_pct
+                
+            ax_esc_est.set_yticks(y_coords)
+            ax_esc_est.set_yticklabels(ordem_esc, fontsize=13, color='#555555')
+            
+            ax_esc_est.spines['top'].set_visible(False)
+            ax_esc_est.spines['right'].set_visible(False)
+            ax_esc_est.spines['left'].set_color('#cccccc')
+            ax_esc_est.spines['bottom'].set_color('#cccccc')
+            ax_esc_est.set_xlabel('Distribuição de Estadiamento (%)', fontsize=14, color='#333333')
+            ax_esc_est.tick_params(axis='x', labelsize=12, colors='#555555')
+            ax_esc_est.set_xlim(0, 100)
+            
+            # Legenda no topo
+            ax_esc_est.legend(frameon=False, fontsize=12, loc='upper center', bbox_to_anchor=(0.5, 1.05), ncol=6)
+            
+            ax_esc_est.set_title(titulo_grafico, color=COR_AZUL_ESCURO, fontweight='bold', pad=40, fontsize=18)
+            
+            st.pyplot(fig_esc_est)
+            
+            col_d1, col_d2 = st.columns([1, 3])
+            with col_d1: download_plot(fig_esc_est, "Escolaridade_vs_Estadio.png")
+            
+            st.markdown(f"""
+            > 📝 **Draft de Documentação:** Este gráfico de barras 100% empilhadas ilustra a distribuição do estadio clínico no momento do diagnóstico estratificada pelo nível de escolaridade do paciente. Esta visualização epidemiológica permite correlacionar a instrução formal com possíveis hiatos no rastreamento precoce (refletidos por um aumento de estadios III e IV nas faixas de menor escolaridade).
+            """)
+            
+            # Gerar Tabela Expandida
+            dados_tabela_cruzada = []
+            
+            for esc in ordem_esc:
+                linha = {"Nível de Escolaridade": esc}
+                total_linha = tabela_cruzada.loc[esc].sum()
+                
+                for est in ordem_est:
+                    val = tabela_cruzada.loc[esc, est]
+                    pct = (val / total_linha) * 100 if total_linha > 0 else 0
+                    linha[f"Estadio {est}"] = f"{int(val):,}".replace(',', '.')
+                    linha[f"% Estadio {est}"] = f"{pct:.1f}%".replace('.', ',')
+                    
+                linha["Total na Categoria"] = f"{int(total_linha):,}".replace(',', '.')
+                dados_tabela_cruzada.append(linha)
+                
+            df_tab_cruzada = pd.DataFrame(dados_tabela_cruzada)
+            
+            st.markdown("#### Consolidação Cruzada: Volumes e Proporções")
+            st.dataframe(df_tab_cruzada, use_container_width=True, hide_index=True)
 
         elif visao_freq == "Top 10 Grupos Principais":
             st.markdown("## As 10 Neoplasias Mais Frequentes (Macro)")
@@ -1375,6 +1580,73 @@ with aba_perfil:
                 st.markdown(f"""
                 > 📝 **Draft de Documentação:** A análise do perfil terapêutico demonstra que a modalidade **{top_trat.title()}** foi a mais registrada no período, compreendendo **{top_trat_val:,} casos ({top_trat_pct:.1f}%)**. As combinações de tratamento refletem a complexidade e a abordagem multidisciplinar exigida pelos diferentes estadiamentos clínicos atendidos na instituição.
                 """.replace(',', 'X').replace('.', ',').replace('X', '.'))
+
+        elif visao_freq == "Naturalidade (Brasil vs Estrangeiros) (Pizza)":
+            st.markdown("## Origem de Nascimento (Brasileiros vs Estrangeiros)")
+            
+            titulo_grafico = st.text_input("✏️ Customizar título do gráfico:", value=f"Distribuição por Naturalidade — RHC, {texto_ano_titulo}", key="title_nat_pizza")
+            
+            nat_data = df_perfil['Naturalidade'].value_counts()
+            
+            dados_tabela_nat = []
+            for nat, count in nat_data.items():
+                perc = (count / total_casos_perfil) * 100
+                dados_tabela_nat.append({
+                    "Naturalidade": nat, 
+                    "Nº de casos": f"{count:,}".replace(",", "."), 
+                    "% do total": f"{perc:.1f}%".replace(".", ",")
+                })
+                
+            dados_tabela_nat.append({
+                "Naturalidade": "TOTAL (100% da Base)",
+                "Nº de casos": f"{total_casos_perfil:,}".replace(",", "."),
+                "% do total": "100,0%"
+            })
+            df_nat_final = pd.DataFrame(dados_tabela_nat)
+            
+            mapa_cores_nat = {'Brasileiros': COR_AZUL_ESCURO, 'Estrangeiros': COR_DOURADO, 'Não Informado': '#999999'}
+            fig_pizza, ax_pizza = plt.subplots(figsize=(10, 7))
+            
+            def autopct_format(pct, allvals):
+                absolute = int(np.round(pct/100.*np.sum(allvals)))
+                val_str = f"{absolute:,}".replace(',', '.')
+                pct_str = f"{pct:.1f}%".replace('.', ',')
+                return f"{pct_str}\n(n={val_str})"
+            
+            wedges, texts, autotexts = ax_pizza.pie(
+                nat_data.values,
+                autopct=lambda pct: autopct_format(pct, nat_data.values),
+                startangle=140,
+                colors=[mapa_cores_nat.get(c, '#4a4a4a') for c in nat_data.index],
+                explode=[0.05 if i > 0 else 0 for i in range(len(nat_data))],
+                textprops={'fontsize': 14, 'weight': 'bold'}
+            )
+            
+            for i, autotext in enumerate(autotexts):
+                perc = nat_data.values[i] / total_casos_perfil
+                if perc > 0.05:
+                    autotext.set_color('white')
+                else:
+                    autotext.set_color('#333333')
+                    x, y = autotext.get_position()
+                    autotext.set_position((x*1.35, y*1.35))
+            
+            ax_pizza.set_title(titulo_grafico, color=COR_AZUL_ESCURO, fontweight='bold', pad=20, fontsize=18)
+            
+            leg_labels = [f"{nat}\n{nat_data[nat]/total_casos_perfil*100:.1f}% (n={nat_data[nat]:,})".replace(',', 'X').replace('.', ',').replace('X', '.') for nat in nat_data.index]
+            ax_pizza.legend(wedges, leg_labels, title="", loc="center left", bbox_to_anchor=(1, 0, 0.5, 1), frameon=False, fontsize=13, labelcolor='#333333')
+            
+            col_graf, col_tab = st.columns([1.2, 1])
+            with col_graf:
+                st.pyplot(fig_pizza)
+                download_plot(fig_pizza, "Naturalidade.png")
+            with col_tab:
+                st.markdown("<br><br>", unsafe_allow_html=True)
+                st.dataframe(df_nat_final, use_container_width=True, hide_index=True)
+                
+            st.markdown(f"""
+            > 📝 **Draft de Documentação:** A imensa maioria dos pacientes atendidos na instituição no período de {anos_perfil[0]} a {anos_perfil[1]} é composta por nascidos no Brasil. Esta métrica reforça o perfil de atendimento focado na população nacional, com uma presença minoritária de estrangeiros ou pacientes sem informação de naturalidade registrada no sistema.
+            """)
 
         elif visao_freq == "Distribuição Geográfica (Rosca)":
             st.markdown("## Distribuição dos casos por região de residência")
