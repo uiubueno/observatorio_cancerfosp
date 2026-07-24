@@ -383,7 +383,13 @@ def carregar_dados(arquivo):
         elif uf in ['99', 'NAN', 'NONE', '', '99.0']: return 'Não Informado'
         else: return 'Estrangeiros'
         
+    def classificar_naturalidade_uf(uf):
+        if uf in valid_ufs: return uf
+        elif uf in ['99', 'NAN', 'NONE', '', '99.0']: return 'Não Informado'
+        else: return 'Estrangeiros'
+        
     df['Naturalidade'] = df['UFNASC_raw'].apply(classificar_naturalidade)
+    df['Naturalidade_UF'] = df['UFNASC_raw'].apply(classificar_naturalidade_uf)
     
     # Processamento Extra: Combinações de Tratamento
     col_trathosp_candidates = [c for c in df.columns if str(c).strip().upper() in ['TRATHOSP', 'TRATAMENTO', 'COMBINAÇÃO DE TRATAMENTO', 'COMBINACAO DE TRATAMENTO']]
@@ -757,7 +763,7 @@ with aba_perfil:
         anos_perfil = st.slider("Recorte Temporal:", min_value=ano_min_df, max_value=ano_max_df, value=(ano_min_df, ano_max_df))
     with col_f2:
         st.markdown("<br>", unsafe_allow_html=True)
-        visao_freq = st.selectbox("Eixo de Análise Visual:", ["Evolução Histórica (Casos por Ano)", "Evolução por Ano e Sexo (Linhas)", "Distribuição por Faixa Etária (Linhas)", "Top 10 Grupos Principais", "Top 10 Comparativo (Homens vs Mulheres)", "Todas as Neoplasias (Grupos Anatômicos)", "Categoria de Atendimento (Pizza)", "Base de Diagnóstico (Pizza)", "Perfil de Tratamento (Barras)", "Escolaridade (Barras)", "Escolaridade vs Estadio Clínico", "Naturalidade (Brasil vs Estrangeiros) (Pizza)", "Distribuição Geográfica (Rosca)", "Distribuição Geográfica (Mapa)"], label_visibility="collapsed")
+        visao_freq = st.selectbox("Eixo de Análise Visual:", ["Evolução Histórica (Casos por Ano)", "Evolução por Ano e Sexo (Linhas)", "Distribuição por Faixa Etária (Linhas)", "Top 10 Grupos Principais", "Top 10 Comparativo (Homens vs Mulheres)", "Todas as Neoplasias (Grupos Anatômicos)", "Categoria de Atendimento (Pizza)", "Base de Diagnóstico (Pizza)", "Perfil de Tratamento (Barras)", "Escolaridade (Barras)", "Escolaridade vs Estadio Clínico", "Naturalidade (Brasil vs Estrangeiros) (Pizza)", "Naturalidade (Por Estado) (Barras)", "Distribuição Geográfica (Rosca)", "Distribuição Geográfica (Mapa)"], label_visibility="collapsed")
     
     df_perfil = df_filtrado[(df_filtrado['Ano_Diag'] >= anos_perfil[0]) & (df_filtrado['Ano_Diag'] <= anos_perfil[1])]
     df_base_ano = df_base[(df_base['Ano_Diag'] >= anos_perfil[0]) & (df_base['Ano_Diag'] <= anos_perfil[1])].copy()
@@ -795,21 +801,48 @@ with aba_perfil:
             casos_por_ano = df_perfil['Ano_Diag'].value_counts().sort_index()
             
             fig_ano, ax_ano = plt.subplots(figsize=(12, 6))
-            bars = ax_ano.bar(casos_por_ano.index, casos_por_ano.values, color=COR_AZUL_ESCURO, edgecolor='white', width=0.7)
+            bars = ax_ano.bar(casos_por_ano.index, casos_por_ano.values, color=COR_AZUL_ESCURO, edgecolor='white', width=0.75)
             
             ax_ano.set_xticks(casos_por_ano.index)
             ax_ano.set_xticklabels(casos_por_ano.index, rotation=45, fontsize=12, color='#555555')
+            
+            # Limpeza das bordas para o visual AC Camargo
             ax_ano.spines['top'].set_visible(False)
             ax_ano.spines['right'].set_visible(False)
-            ax_ano.spines['left'].set_color('#cccccc')
+            ax_ano.spines['left'].set_visible(False) 
             ax_ano.spines['bottom'].set_color('#cccccc')
+            
             ax_ano.set_xlabel('Ano de diagnóstico', fontsize=14, labelpad=10, color='#333333')
-            ax_ano.set_ylabel('Número de casos', fontsize=14, color='#333333')
-            ax_ano.yaxis.grid(True, linestyle='--', alpha=0.4)
+            ax_ano.set_ylabel('Número de casos novos', fontsize=14, color='#333333')
+            
+            # Grade contínua (linha sólida) e ticks zerados
+            ax_ano.yaxis.grid(True, linestyle='-', color='#e0e0e0', alpha=1.0)
             ax_ano.set_axisbelow(True)
-            ax_ano.tick_params(axis='y', labelsize=12, colors='#555555')
+            ax_ano.tick_params(axis='y', length=0, labelsize=12, colors='#555555')
+            ax_ano.tick_params(axis='x', length=0)
             
             ax_ano.set_title(titulo_grafico, color=COR_AZUL_ESCURO, fontweight='bold', pad=20, fontsize=18)
+            
+            # Lógica para inserir os números na vertical dentro da base de cada barra
+            max_y = max(casos_por_ano.values) if len(casos_por_ano) > 0 else 100
+            for bar in bars:
+                altura = bar.get_height()
+                if altura > 0:
+                    # Se a barra for muito curtinha, coloca o texto em cima de preto, senão dentro de branco
+                    if altura > max_y * 0.15:
+                        ax_ano.text(
+                            bar.get_x() + bar.get_width() / 2,
+                            max_y * 0.02, # Leve recuo da base
+                            f"{int(altura):,}".replace(',', '.'),
+                            ha='center', va='bottom', rotation=90, color='white', fontsize=11, fontweight='bold'
+                        )
+                    else:
+                        ax_ano.text(
+                            bar.get_x() + bar.get_width() / 2,
+                            altura + (max_y * 0.02),
+                            f"{int(altura):,}".replace(',', '.'),
+                            ha='center', va='bottom', rotation=90, color='#333333', fontsize=11, fontweight='bold'
+                        )
             
             st.pyplot(fig_ano)
             
@@ -1648,6 +1681,75 @@ with aba_perfil:
             > 📝 **Draft de Documentação:** A imensa maioria dos pacientes atendidos na instituição no período de {anos_perfil[0]} a {anos_perfil[1]} é composta por nascidos no Brasil. Esta métrica reforça o perfil de atendimento focado na população nacional, com uma presença minoritária de estrangeiros ou pacientes sem informação de naturalidade registrada no sistema.
             """)
 
+        elif visao_freq == "Naturalidade (Por Estado) (Barras)":
+            st.markdown("## Origem de Nascimento Detalhada (Por Estado)")
+            
+            titulo_grafico = st.text_input("✏️ Customizar título do gráfico:", value=f"Distribuição da naturalidade por estado — RHC, {texto_ano_titulo}", key="title_nat_barras")
+            
+            nat_uf_data = df_perfil['Naturalidade_UF'].value_counts()
+            
+            df_grafico = pd.DataFrame({
+                "Origem": nat_uf_data.index,
+                "N_raw": nat_uf_data.values
+            }).sort_values(by="N_raw", ascending=True) 
+            
+            fig_nat_uf, ax_nat_uf = plt.subplots(figsize=(12, max(6, len(df_grafico) * 0.4)))
+            y_coords = np.arange(len(df_grafico))
+            
+            def get_color(origem):
+                if origem == 'Estrangeiros': return COR_DOURADO
+                if origem == 'Não Informado': return '#999999'
+                return COR_AZUL_ESCURO
+                
+            cores_barras = [get_color(x) for x in df_grafico["Origem"]]
+            
+            bars = ax_nat_uf.barh(y_coords, df_grafico['N_raw'], color=cores_barras, edgecolor='white')
+            ax_nat_uf.set_yticks(y_coords)
+            ax_nat_uf.set_yticklabels(df_grafico["Origem"], fontsize=12, color='#555555')
+            
+            ax_nat_uf.spines['top'].set_visible(False)
+            ax_nat_uf.spines['right'].set_visible(False)
+            ax_nat_uf.spines['left'].set_color('#cccccc')
+            ax_nat_uf.spines['bottom'].set_color('#cccccc')
+            ax_nat_uf.set_xlabel('Número de casos', fontsize=14, color='#333333')
+            ax_nat_uf.tick_params(axis='x', labelsize=12, colors='#555555')
+            ax_nat_uf.set_title(titulo_grafico, color=COR_AZUL_ESCURO, fontweight='bold', pad=15, fontsize=18)
+            
+            for i, bar in enumerate(bars):
+                val = df_grafico.iloc[i]['N_raw']
+                ax_nat_uf.text(val + (total_casos_perfil * 0.005), bar.get_y() + bar.get_height()/2, f"{val:,}".replace(",", "."), va='center', ha='left', color='#333333', fontsize=12)
+                
+            st.pyplot(fig_nat_uf)
+            
+            col_d1, col_d2 = st.columns([1, 3])
+            with col_d1: download_plot(fig_nat_uf, "Naturalidade_Estados.png")
+            
+            dados_tabela_nat_uf = []
+            nat_uf_desc = nat_uf_data.sort_values(ascending=False)
+            
+            for origem, count in nat_uf_desc.items():
+                pct = (count / total_casos_perfil) * 100
+                dados_tabela_nat_uf.append({
+                    "Origem (UF / Categoria)": origem,
+                    "Nº de casos": f"{count:,}".replace(",", "."),
+                    "N_raw": count,
+                    "% do total": f"{pct:.1f}%".replace(".", ",")
+                })
+                
+            dados_tabela_nat_uf.append({
+                "Origem (UF / Categoria)": "TOTAL (100% da Base)",
+                "Nº de casos": f"{total_casos_perfil:,}".replace(",", "."),
+                "N_raw": total_casos_perfil,
+                "% do total": "100,0%"
+            })
+            
+            df_tab_nat_uf = pd.DataFrame(dados_tabela_nat_uf)
+            st.dataframe(df_tab_nat_uf.drop(columns=['N_raw']), use_container_width=True, hide_index=True)
+            
+            st.markdown(f"""
+            > 📝 **Draft de Documentação:** A estratificação por estado de naturalidade permite mapear o perfil migratório e demográfico da população atendida. É possível observar o volume de pacientes provenientes de outras unidades federativas (bem como estrangeiros) que buscam tratamento no estado de São Paulo, evidenciando o papel da instituição como polo de referência oncológica nacional.
+            """)
+
         elif visao_freq == "Distribuição Geográfica (Rosca)":
             st.markdown("## Distribuição dos casos por região de residência")
             
@@ -1974,16 +2076,13 @@ with aba_sobrevida:
         st.markdown("<br>", unsafe_allow_html=True)
         tipo_grafico = st.selectbox("Eixo de Análise Visual:", ["Sobrevida Global (Todas as Neoplasias)", "Sobrevida por Doença Específica", "Ranking de Sobrevida (5 Anos)", "Quadro Metodológico (CIDs e Morfologias)"], label_visibility="collapsed")
     
-    st.info(f"💡 **Recomendação Metodológica:** Para avaliar sobrevivência em 5 anos com confiabilidade, o limite aconselhável de acompanhamento é **{sugestao_max_sobrevida}**. Casos *in situ* (Estadio 0) e Câncer de Pele Não-Melanoma são automaticamente excluídos destas coortes de sobrevida.")
+    st.info(f"💡 **Recomendação Metodológica:** Para avaliar sobrevivência em 5 anos com confiabilidade, o limite aconselhável de acompanhamento é **{sugestao_max_sobrevida}**. Dica: O motor respeita seus filtros globais de Estadio. Exclua ou inclua casos *in situ* na barra lateral conforme o desenho do seu estudo.")
     st.markdown("<hr>", unsafe_allow_html=True)
     
     df_sobrevida_base = df_filtrado[(df_filtrado['Ano_Diag'] >= anos_sobrevida[0]) & (df_filtrado['Ano_Diag'] <= anos_sobrevida[1])].copy()
     
-    # Aplicando a regra Ouro de Sobrevida: Excluir Pele Não-Melanoma e In Situ
-    df_global = df_sobrevida_base[
-        (df_sobrevida_base['Macro_Topografia'] != 'Pele - não-melanoma') & 
-        (df_sobrevida_base['Estadio_Clinico'] != '0 (in situ)')
-    ].copy()
+    # Aplicando a regra Ouro de Sobrevida: Excluir Pele Não-Melanoma (Estadio in situ é controlado pelo filtro lateral)
+    df_global = df_sobrevida_base[df_sobrevida_base['Macro_Topografia'] != 'Pele - não-melanoma'].copy()
     
     titulo_coorte = f"coorte {anos_sobrevida[0]}–{anos_sobrevida[1]}"
     
@@ -2039,11 +2138,12 @@ with aba_sobrevida:
                         })
                 texto_p = extrair_pvalue_logrank(df_global[df_global['Quinquenio'].isin(grupos)], 'Quinquenio')
                 if texto_p: ax.text(0.02, 0.05, texto_p, transform=ax.transAxes, fontsize=12, color='#333333', bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8f9fa", edgecolor="#cccccc", alpha=0.9))
-                ax.legend(frameon=False, loc='upper right', fontsize=12)
+                ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=12)
             
             elif comparacao_global == "Estadio Clínico":
-                grupos = ['I', 'II', 'III', 'IV']
-                cores_est = {'I': COR_AZUL_ESCURO, 'II': COR_DOURADO, 'III': '#7b2e3a', 'IV': '#4a4a4a'}
+                grupos_possiveis = ['0 (in situ)', 'I', 'II', 'III', 'IV']
+                grupos = [g for g in grupos_possiveis if g in df_global['Estadio_Clinico'].unique()]
+                cores_est = {'0 (in situ)': '#3a7a78', 'I': COR_AZUL_ESCURO, 'II': COR_DOURADO, 'III': '#7b2e3a', 'IV': '#4a4a4a'}
                 for grp in grupos:
                     df_g = df_global[df_global['Estadio_Clinico'] == grp]
                     if len(df_g) > 5:
@@ -2060,7 +2160,7 @@ with aba_sobrevida:
                         })
                 texto_p = extrair_pvalue_logrank(df_global[df_global['Estadio_Clinico'].isin(grupos)], 'Estadio_Clinico')
                 if texto_p: ax.text(0.02, 0.05, texto_p, transform=ax.transAxes, fontsize=12, color='#333333', bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8f9fa", edgecolor="#cccccc", alpha=0.9))
-                ax.legend(frameon=False, loc='upper right', fontsize=12)
+                ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=12)
             
             elif comparacao_global == "Sexo":
                 grupos = ['Feminino', 'Masculino']
@@ -2080,9 +2180,13 @@ with aba_sobrevida:
                         })
                 texto_p = extrair_pvalue_logrank(df_global[df_global['Sexo'].isin(['FEMININO', 'MASCULINO'])], 'Sexo')
                 if texto_p: ax.text(0.02, 0.05, texto_p, transform=ax.transAxes, fontsize=12, color='#333333', bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8f9fa", edgecolor="#cccccc", alpha=0.9))
-                ax.legend(frameon=False, loc='upper right', fontsize=12)
+                ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=12)
 
             configurar_eixos_grafico(ax, titulo_grafico)
+            if comparacao_global != "Sem divisão (Curva Única)":
+                fig.subplots_adjust(right=0.75)
+            else:
+                fig.tight_layout()
             st.pyplot(fig)
             
             col_d1, col_d2 = st.columns([1, 3])
@@ -2092,7 +2196,7 @@ with aba_sobrevida:
             if comparacao_global != "Sem divisão (Curva Única)":
                 desc_comp = f", comparada por **{comparacao_global}**"
                 
-            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para **todas as topografias invasivas** (C00-C80, exceto pele não-melanoma){str_filtros}{desc_comp}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
+            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para **todas as topografias** (C00-C80, exceto pele não-melanoma){str_filtros}{desc_comp}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
             
             if resultados_tabela:
                 df_res = pd.DataFrame(resultados_tabela)
@@ -2211,12 +2315,13 @@ with aba_sobrevida:
             ax.set_title(titulo_grafico, color=COR_AZUL_ESCURO, fontweight='bold', pad=15, fontsize=18)
             
             for bar, surv in zip(bars, df_barras['Surv']): ax.text(surv + 3, bar.get_y() + bar.get_height()/2, f'{surv:.1f}%'.replace('.', ','), va='center', fontsize=12, color='#333333')
+            fig.tight_layout()
             st.pyplot(fig)
             
             col_d1, col_d2 = st.columns([1, 3])
             with col_d1: download_plot(fig, "Ranking_Sobrevida_5Anos.png")
             
-            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para as **10 Neoplasias Mais Frequentes** (casos invasivos){str_filtros}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
+            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para as **10 Neoplasias Mais Frequentes** (casos incluídos conforme filtros){str_filtros}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
             
             if dados_tabela:
                 df_res = pd.DataFrame(dados_tabela).sort_values(by="N_raw", ascending=False).drop(columns=["N_raw"])
@@ -2285,11 +2390,12 @@ with aba_sobrevida:
                         })
                 texto_p = extrair_pvalue_logrank(df_doenca[df_doenca['Quinquenio'].isin(grupos)], 'Quinquenio')
                 if texto_p: ax.text(0.02, 0.05, texto_p, transform=ax.transAxes, fontsize=12, color='#333333', bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8f9fa", edgecolor="#cccccc", alpha=0.9))
-                ax.legend(frameon=False, loc='upper right', fontsize=12)
+                ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=12)
             
             elif comparacao_doenca == "Estadio Clínico":
-                grupos = ['I', 'II', 'III', 'IV']
-                cores_est = {'I': COR_AZUL_ESCURO, 'II': COR_DOURADO, 'III': '#7b2e3a', 'IV': '#4a4a4a'}
+                grupos_possiveis = ['0 (in situ)', 'I', 'II', 'III', 'IV']
+                grupos = [g for g in grupos_possiveis if g in df_doenca['Estadio_Clinico'].unique()]
+                cores_est = {'0 (in situ)': '#3a7a78', 'I': COR_AZUL_ESCURO, 'II': COR_DOURADO, 'III': '#7b2e3a', 'IV': '#4a4a4a'}
                 for grp in grupos:
                     df_g = df_doenca[df_doenca['Estadio_Clinico'] == grp]
                     if len(df_g) > 5:
@@ -2306,7 +2412,7 @@ with aba_sobrevida:
                         })
                 texto_p = extrair_pvalue_logrank(df_doenca[df_doenca['Estadio_Clinico'].isin(grupos)], 'Estadio_Clinico')
                 if texto_p: ax.text(0.02, 0.05, texto_p, transform=ax.transAxes, fontsize=12, color='#333333', bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8f9fa", edgecolor="#cccccc", alpha=0.9))
-                ax.legend(frameon=False, loc='upper right', fontsize=12)
+                ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=12)
             
             elif comparacao_doenca == "Sexo":
                 grupos = ['Feminino', 'Masculino']
@@ -2326,9 +2432,13 @@ with aba_sobrevida:
                         })
                 texto_p = extrair_pvalue_logrank(df_doenca[df_doenca['Sexo'].isin(['FEMININO', 'MASCULINO'])], 'Sexo')
                 if texto_p: ax.text(0.02, 0.05, texto_p, transform=ax.transAxes, fontsize=12, color='#333333', bbox=dict(boxstyle="round,pad=0.4", facecolor="#f8f9fa", edgecolor="#cccccc", alpha=0.9))
-                ax.legend(frameon=False, loc='upper right', fontsize=12)
+                ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(1.02, 1), fontsize=12)
 
             configurar_eixos_grafico(ax, titulo_grafico)
+            if comparacao_doenca != "Sem divisão (Curva Única)":
+                fig.subplots_adjust(right=0.75)
+            else:
+                fig.tight_layout()
             st.pyplot(fig)
             
             col_d1, col_d2 = st.columns([1, 3])
@@ -2339,7 +2449,7 @@ with aba_sobrevida:
             if comparacao_doenca != "Sem divisão (Curva Única)":
                 desc_comp = f", comparada por **{comparacao_doenca}**"
                 
-            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para neoplasias invasivas de **{doenca_escolhida}** ({cid_str}){str_filtros}{desc_comp}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
+            st.markdown(f"> 📝 **Descrição da Curva:** Probabilidade de sobrevida global estimada em 5 anos para neoplasias de **{doenca_escolhida}** ({cid_str}){str_filtros}{desc_comp}, pacientes analíticos, no período de {anos_sobrevida[0]}–{anos_sobrevida[1]}.")
             
             if resultados_tabela:
                 df_res = pd.DataFrame(resultados_tabela)
@@ -2414,7 +2524,7 @@ with aba_sobrevida:
         st.markdown("## Quadro Metodológico: Classificação, Topografia e Morfologia")
         
         st.markdown(f"""
-        > 📝 **Draft de Documentação:** Quadro resumo das categorias de câncer incluídas na análise de sobrevida, detalhando a classificação histológica (CID-10), os códigos de topografia e morfologia (CID-O3), a distribuição por sexo e o volume total de casos (coorte {anos_sobrevida[0]}–{anos_sobrevida[1]}). Foram excluídos os casos *in situ* e as neoplasias de pele não-melanoma.
+        > 📝 **Draft de Documentação:** Quadro resumo das categorias de câncer incluídas na análise de sobrevida, detalhando a classificação histológica (CID-10), os códigos de topografia e morfologia (CID-O3), a distribuição por sexo e o volume total de casos (coorte {anos_sobrevida[0]}–{anos_sobrevida[1]}). Os filtros aplicados na barra lateral (como a exclusão de casos *in situ*) são refletidos matematicamente neste quadro.
         """)
         
         DIC_CID10_HISTO = {
